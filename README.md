@@ -14,20 +14,15 @@
 
 ## 下载与安装
 
-**下载预编译版**:<https://github.com/ren2019/LiteOC/releases/latest> → 取最新 `LiteOC-*.zip`,解压后在终端执行:
-```bash
-cd LiteOC-*            # 进入解压目录
-sudo sh setup-root.sh  # ① 缺 openconnect 时自动 brew install
-                       # ② 装 vpnctl 到 /usr/local/sbin + 写免密 sudoers(仅限 vpnctl)
-                       # ③ 把 LiteOC.app 放到 /Applications
-```
-装完即可,下一步见下方【使用】。
+**双击安装(无需终端)**:<https://github.com/ren2019/LiteOC/releases/latest> → 下载 `LiteOC-*.pkg` → 双击,按向导输入本机登录密码即可。安装器以 root 完成:装 vpnctl 到 `/usr/local/sbin`、把**内置的**自包含 openconnect 装到 `/usr/local/libexec/liteoc`(均 root 拥有)、写免密 sudoers(仅限 vpnctl 路径)、把 LiteOC.app 放到 /Applications。**无需 Homebrew。**
 
-**或从源码构建**:
+> 首次打开若被 Gatekeeper 挡(因 .pkg 为 ad-hoc 匿名签名、未公证):系统设置 → 隐私与安全性 → 「仍要打开」。全程图形界面,不开终端。
+
+**或从源码构建(需终端 + Homebrew)**:
 ```bash
 cd gui && ./build.sh && sudo sh setup-root.sh
 ```
-> `setup-root.sh` 把 vpnctl 装到 `/usr/local/sbin`(root:wheel,用户不可写),并在 `/etc/sudoers.d/vpnctl` 仅对 vpnctl 路径免密——最小权限。仅 Apple Silicon / macOS 12+。
+> 仅 Apple Silicon / macOS 12+。
 
 ## 使用
 1. 启动台打开 **LiteOC**(菜单栏出现地球图标)

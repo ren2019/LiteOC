@@ -23,8 +23,8 @@ fi
 [ -n "$PIN" ] || { echo "❌ PIN 为空"; exit 2; }
 
 BIN=""
-for p in /opt/homebrew/bin/openconnect /usr/local/bin/openconnect; do [ -x "$p" ] && BIN="$p" && break; done
-[ -n "$BIN" ] || { echo "❌ 未找到 openconnect (brew install openconnect)"; exit 3; }
+for p in /usr/local/libexec/liteoc/openconnect /opt/homebrew/bin/openconnect /usr/local/bin/openconnect; do [ -x "$p" ] && BIN="$p" && break; done
+[ -n "$BIN" ] || { echo "❌ 未找到 openconnect (重新运行 LiteOC 安装器, 或 brew install openconnect)"; exit 3; }
 
 echo "→ 连接 https://$HOST (user=$USER, group=$GROUP) …  Ctrl-C 断开"
 # stdin 顺序: 密码(第1行) + group(第2行)

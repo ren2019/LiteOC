@@ -24,12 +24,12 @@ miss=""
 [ -n "$miss" ] && { echo "config-error:缺$miss (检查配置文件)"; exit 3; }
 [ -n "$V_IPRE" ] || V_IPRE="10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+"  # 仅状态显示兜底
 
-# openconnect 二进制: 写死的固定清单 (Apple Silicon / Intel)
+# openconnect 二进制: 写死的固定清单 (内置优先, brew 回退)
 BIN=""
-for p in /opt/homebrew/bin/openconnect /usr/local/bin/openconnect; do
+for p in /usr/local/libexec/liteoc/openconnect /opt/homebrew/bin/openconnect /usr/local/bin/openconnect; do
     [ -x "$p" ] && BIN="$p" && break
 done
-[ -n "$BIN" ] || { echo "openconnect-not-found (先 brew install openconnect)"; exit 4; }
+[ -n "$BIN" ] || { echo "openconnect-not-found (重新运行 LiteOC 安装器)"; exit 4; }
 
 PIDFILE="/tmp/liteoc-openconnect.pid"
 LOG="/tmp/liteoc-openconnect.log"

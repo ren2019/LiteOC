@@ -286,7 +286,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 switch r {
                 case "auth-failed": self.setBusy(false); self.alert("连接失败", "用户名或密码错误 —— 检查 PIN。")
                 case "cert-discover-failed": self.setBusy(false); self.alert("证书获取失败", "无法自动获取网关证书, 请在「配置…」手动填 pin-sha256。")
-                case "openconnect-not-found": self.setBusy(false); self.alert("缺少依赖", "brew install openconnect")
+                case "openconnect-not-found": self.setBusy(false); self.alert("缺少依赖", "重新运行 LiteOC 安装器(.pkg)以补齐内置 openconnect。")
                 case "no-pin": self.setBusy(false); self.alert("连接失败", "未收到 PIN。")
                 default: break   // started / already-running: 等 busyTick 检测 up
                 }

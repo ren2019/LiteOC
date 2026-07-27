@@ -16,36 +16,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build LiteOC.app
+      - name: Install openconnect + dylibbundler
+        run: brew install openconnect dylibbundler
+
+      - name: Build self-contained openconnect (oc-bundle)
+        working-directory: gui
+        run: |
+          mkdir -p build/oc-bundle
+          cp "$(brew --prefix openconnect)/bin/openconnect" build/oc-bundle/openconnect
+          dylibbundler -cd -b -x build/oc-bundle/openconnect -d build/oc-bundle/libs/ -p @executable_path/libs/
+          # 自包含守卫(接缝 2):必须无 /opt/homebrew 引用 + 能跑
+          test "$(otool -L build/oc-bundle/openconnect | grep -c /opt/homebrew)" -eq 0
+          build/oc-bundle/openconnect --version
+
+      - name: Build LiteOC.app + .pkg
         working-directory: gui
         env:
-          LITEOC_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}   # 仅 tag 传版本; 否则 build.sh 用默认 1.2
-        run: sh ./build.sh
-
-      - name: Assemble self-contained zip
+          LITEOC_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            STAGE="LiteOC-${GITHUB_REF_NAME#v}"
-          else
-            STAGE="LiteOC-${GITHUB_SHA::7}"
-          fi
-          rm -rf dist && mkdir -p "dist/$STAGE"
-          cp -R gui/build/LiteOC.app "dist/$STAGE/"
-          cp gui/vpnctl gui/setup-root.sh gui/INSTALL.txt "dist/$STAGE/"
-          ( cd dist && ditto -c -k --keepParent "$STAGE" "$STAGE.zip" )
-          echo "STAGE=$STAGE" >> "$GITHUB_ENV"
-          echo "→ 产物: dist/$STAGE.zip"
+          sh ./build.sh
+          sh ./build-pkg.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.STAGE }}
-          path: dist/*.zip
+          name: LiteOC-pkg
+          path: gui/build/LiteOC-*.pkg
           retention-days: 30
 
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.zip
+          files: gui/build/LiteOC-*.pkg
           generate_release_notes: true

@@ -22,8 +22,8 @@
 - **分到的内网 IP**:优先从 openconnect 日志(`/tmp/liteoc-openconnect.log`)的 `Configured as <ip>` 取;取不到则 `ifconfig` 按 `VPN_IP_PATTERN`(可选)兜底。
 - 网段换 / 动态分配都不用改代码(主路径靠 openconnect 自身输出)。
 
-## D4 — openconnect 路径:写死 + 安装器统一装 ✅
-vpnctl 用写死的固定清单(`/opt/homebrew/bin` → `/usr/local/bin`);安装器负责 `brew install openconnect`,setup-root 启动前校验。见 ADR-0001。
+## D4 — openconnect 路径:写死 + 安装器内置 ✅
+vpnctl 用写死的固定清单:**内置 `/usr/local/libexec/liteoc/openconnect` 优先** → Homebrew 路径(`/opt/homebrew/bin` → `/usr/local/bin`)回退。发布安装器(.pkg)把自包含 openconnect 装到 root 拥有的 libexec;源码/开发路径仍可用 brew。见 ADR-0001。
 
 ## D5 — 配置文件格式与位置 ✅
 KEY=VALUE(带 `#` 注释),`~/Library/Application Support/LiteOC/config`。App 首次启动写默认模板;vpnctl 用 `grep+cut` 安全解析(不 `eval`);菜单「配置…」打开**图形配置窗口**(非文本编辑器)。
