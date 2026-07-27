@@ -5,7 +5,6 @@ let APPNAME   = "LiteOC"
 let VPNCTL    = "/usr/local/sbin/vpnctl"
 let ConfDir   = NSHomeDirectory() + "/Library/Application Support/LiteOC"
 let ConfPath  = ConfDir + "/config"
-let SVC_CHAIN = ["LiteOC", "LiteOC", "LiteOC"]   // 钥匙串服务名迁移链
 let ACCOUNT   = "pin"
 
 // 默认配置模板 (占位符, 首次启动写入)
@@ -77,17 +76,7 @@ func rawPin(_ service: String) -> String? {
     let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
     return t.isEmpty ? nil : t
 }
-func pinGet(_ target: String) -> String? {
-    if let p = rawPin(target) { return p }
-    for svc in SVC_CHAIN where svc != target {
-        if let p = rawPin(svc) {
-            run("/usr/bin/security", ["add-generic-password", "-s", target, "-a", ACCOUNT, "-w", p, "-T", "/usr/bin/security", "-U"])
-            run("/usr/bin/security", ["delete-generic-password", "-s", svc, "-a", ACCOUNT])
-            return p
-        }
-    }
-    return nil
-}
+func pinGet(_ target: String) -> String? { rawPin(target) }
 func pinSet(_ service: String, _ v: String) {
     run("/usr/bin/security", ["add-generic-password", "-s", service, "-a", ACCOUNT, "-w", v, "-T", "/usr/bin/security", "-U"])
 }

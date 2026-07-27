@@ -23,10 +23,8 @@ echo "$USER_ ALL=(root) NOPASSWD: /usr/local/sbin/vpnctl" > /etc/sudoers.d/vpnct
 chmod 0440 /etc/sudoers.d/vpnctl
 visudo -cf /etc/sudoers.d/vpnctl >/dev/null
 
-echo "→ 安装 App 到 /Applications, 清理旧名…"
-pkill -x LiteOC 2>/dev/null || true
-pkill -x LiteOC 2>/dev/null || true
-rm -rf "/Applications/LiteOC.app" "/Applications/LiteOC.app" "/Applications/LiteOC.app"
+echo "→ 安装 App 到 /Applications…"
+rm -rf "/Applications/LiteOC.app"
 cp -R "$DIR/build/LiteOC.app" "/Applications/"
 
 echo ""

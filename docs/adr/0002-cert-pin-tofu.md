@@ -10,7 +10,7 @@
 `SERVERCERT` **可选**。为空时:
 1. vpnctl 首次连接主动获取网关证书的 `pin-sha256`(让 openconnect 报出,或用 openssl 做 TLS 探测算 SPKI 哈希);
 2. 用该 pin 完成本次连接;
-3. 把 pin **回传给 App**,由 **App(用户态)**写入 `config` 的 `SERVERCERT=`(不让 root 直接改用户文件,避免属主错乱)。
+3. 把 pin **回传给 App**,由 **App(用户态)**写入 `~/Library/Application Support/LiteOC/config` 的 `SERVERCERT=`(不让 root 直接改用户文件,避免属主错乱)。
 
 之后每次连接严格按此 pin 校验。
 

@@ -38,6 +38,21 @@ CLI 兜底:`./connect.sh`(读同一份 `~/Library/Application Support/LiteOC/con
 - [docs/prd-config-extraction.md](docs/prd-config-extraction.md) — PRD
 - [docs/adr/](docs/adr/) — 0001 路径安全边界、0002 证书 TOFU
 
+## 与 openconnect-gui 的关系
+[openconnect-gui](https://gitlab.com/openconnect/openconnect-gui) 是上游**通用、跨平台、功能完整**的重量级客户端(Windows/macOS/Linux,支持 OTP / 客户端证书 / PKCS#11 硬件令牌 / 多 profile)。LiteOC **不替代它**,而是用广度换单一场景的零摩擦:
+
+| | openconnect-gui | LiteOC |
+|---|---|---|
+| 定位 | 通用全功能 GUI | AnyLink / 纯 PIN 的薄封装 |
+| 平台 | Windows / macOS / Linux | 仅 macOS |
+| 凭证 | Qt 自有存储 | **PIN 只进钥匙串**(不落盘) |
+| 证书 | 自行提供指纹 | **TOFU**:留空自动获取并回写 |
+| 提权 | macOS 每次启动弹管理员密码 | **NOPASSWD 只锁单一二进制** |
+| 体量 | Qt,1000+ commits | ~300 行 Swift + 一个 shell |
+
+**选 LiteOC**:macOS 用户、AnyLink/纯 PIN 网关、想要菜单栏一键免密连断、把 PIN 放进钥匙串。
+**选 openconnect-gui**:需要 OTP / 客户端证书 / 硬件令牌 / 跨平台 / 多 profile。
+
 ## 适用范围
 **支持**:AnyLink 及 openconnect 兼容的 SSL VPN(改 4 个网关字段 + PIN 即可指向不同部署;同公司可给同事共用,各自 PIN 钥匙串隔离)。
 **不支持**:OpenVPN / WireGuard / IPsec / SangFor EasyConnect 专有协议 / SSO-SAML / 客户端证书 / 非 macOS。
