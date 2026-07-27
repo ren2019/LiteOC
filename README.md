@@ -12,21 +12,22 @@
 - 🎯 **分到的内网 IP 自动探测**(从 openconnect 输出,不靠写死网段)
 - 🛡️ **安全边界**:openconnect 路径写死、配置只解析不执行(防注入/防提权),详见 [ADR-0001](docs/adr/0001-openconnect-path-not-user-configurable.md)
 
-## 安装
+## 下载与安装
 
-**方式一 · 下载预编译版**(最简单):从 [Releases](../../releases) 下载 zip,解压后
+**下载预编译版**:<https://github.com/ren2019/LiteOC/releases/latest> → 取最新 `LiteOC-*.zip`,解压后在终端执行:
 ```bash
-cd LiteOC-*            # 解压目录
-sudo sh setup-root.sh  # 自动 brew install openconnect(若缺)+ vpnctl + 免密 sudoers + 装 App
+cd LiteOC-*            # 进入解压目录
+sudo sh setup-root.sh  # ① 缺 openconnect 时自动 brew install
+                       # ② 装 vpnctl 到 /usr/local/sbin + 写免密 sudoers(仅限 vpnctl)
+                       # ③ 把 LiteOC.app 放到 /Applications
 ```
+装完即可,下一步见下方【使用】。
 
-**方式二 · 从源码构建**:
+**或从源码构建**:
 ```bash
-cd gui
-./build.sh             # 编译打包 LiteOC.app
-sudo sh setup-root.sh  # 自动 brew install openconnect(若缺)、装 vpnctl + App 到 /Applications
+cd gui && ./build.sh && sudo sh setup-root.sh
 ```
-> `setup-root.sh` 把 vpnctl 装到 `/usr/local/sbin`(root:wheel,用户不可写),并在 `/etc/sudoers.d/vpnctl` 仅对 vpnctl 路径免密——最小权限。
+> `setup-root.sh` 把 vpnctl 装到 `/usr/local/sbin`(root:wheel,用户不可写),并在 `/etc/sudoers.d/vpnctl` 仅对 vpnctl 路径免密——最小权限。仅 Apple Silicon / macOS 12+。
 
 ## 使用
 1. 启动台打开 **LiteOC**(菜单栏出现地球图标)
