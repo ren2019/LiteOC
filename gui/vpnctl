@@ -16,12 +16,11 @@ cfg() {
 V_HOST="$(cfg HOST)"; V_USER="$(cfg USER)"; V_GROUP="$(cfg GROUP)"
 V_CERT="$(cfg SERVERCERT)"; V_IPRE="$(cfg VPN_IP_PATTERN)"
 
-# 必填校验 (fail loudly, 不静默兜底真实值)
+# 必填校验 (SERVERCERT 可选, 留空则首次自动获取 — D9 TOFU)
 miss=""
 [ -n "$V_HOST" ]   || miss="$miss HOST"
 [ -n "$V_USER" ]   || miss="$miss USER"
 [ -n "$V_GROUP" ]  || miss="$miss GROUP"
-[ -n "$V_CERT" ]   || miss="$miss SERVERCERT"
 [ -n "$miss" ] && { echo "config-error:缺$miss (检查配置文件)"; exit 3; }
 [ -n "$V_IPRE" ] || V_IPRE="10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+"  # 仅状态显示兜底
 
@@ -40,10 +39,19 @@ case "$cmd" in
     if pgrep -x openconnect >/dev/null 2>&1; then echo "already-running"; exit 0; fi
     PIN="$(cat)"   # PIN 从 stdin 读 (App 从钥匙串喂入)
     [ -n "$PIN" ] || { echo "no-pin"; exit 2; }
+    # 证书指纹为空 → 自动探测: 不带 servercert 跑一次, openconnect 会报出 pin (认证前失败, 安全)
+    DISCOVERED=""
+    if [ -z "$V_CERT" ]; then
+      V_CERT="$(echo | "$BIN" --user="$V_USER" --passwd-on-stdin "https://$V_HOST" 2>&1 \
+                | grep -oE 'pin-sha256:[A-Za-z0-9+/=]+' | head -1 || true)"
+      [ -n "$V_CERT" ] || { echo "cert-discover-failed"; exit 5; }
+      DISCOVERED="$V_CERT"
+    fi
     # stdin 顺序: 密码(第1行) + group(第2行); --background 后台驻留; 输出记日志供取 IP
     if printf '%s\n%s\n' "$PIN" "$V_GROUP" | "$BIN" --background --syslog --pid-file="$PIDFILE" \
          --user="$V_USER" --passwd-on-stdin --servercert="$V_CERT" \
          "https://$V_HOST" >"$LOG" 2>&1; then
+      [ -n "$DISCOVERED" ] && echo "discovered-cert:$DISCOVERED"   # 让 App 回写到配置
       echo "started"
     else
       echo "auth-failed"; exit 1
