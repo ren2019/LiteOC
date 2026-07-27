@@ -1,0 +1,16 @@
+LiteOC — 安装(终端里执行)
+
+  cd <解压出来的目录>
+  sudo sh setup-root.sh
+
+setup-root.sh 会自动:
+  • 缺 openconnect 时,以你的身份 brew install openconnect(brew 不以 root 跑)
+  • 安装 vpnctl 到 /usr/local/sbin + 写免密 sudoers(仅限 vpnctl 路径)
+  • 把 LiteOC.app 放到 /Applications
+
+完成后:
+  启动台打开 LiteOC → 菜单「配置…」填 网关/用户/组(证书留空首次自动获取)
+  → 「设置 PIN…」存 PIN → 点「连接」
+
+要求:macOS 12+(当前为 Apple Silicon / arm64 版)
+排错 / 源码 / 说明:https://github.com/ren2019/LiteOC

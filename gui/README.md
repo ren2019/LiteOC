@@ -22,7 +22,7 @@ LiteOC 菜单栏 App 的构建脚本与源码。用户向说明见[根 README](.
 ```bash
 sudo sh setup-root.sh
 ```
-先确认 `brew install openconnect` 已装(setup-root 会校验)。
+`setup-root.sh` 缺 openconnect 时会自动以你的身份 `brew install`(无需手动)。
 
 ## 改代码后重装
 ```bash

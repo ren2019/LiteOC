@@ -13,11 +13,18 @@
 - 🛡️ **安全边界**:openconnect 路径写死、配置只解析不执行(防注入/防提权),详见 [ADR-0001](docs/adr/0001-openconnect-path-not-user-configurable.md)
 
 ## 安装
+
+**方式一 · 下载预编译版**(最简单):从 [Releases](../../releases) 下载 zip,解压后
 ```bash
-brew install openconnect
+cd LiteOC-*            # 解压目录
+sudo sh setup-root.sh  # 自动 brew install openconnect(若缺)+ vpnctl + 免密 sudoers + 装 App
+```
+
+**方式二 · 从源码构建**:
+```bash
 cd gui
-./build.sh              # 编译打包 LiteOC.app
-sudo sh setup-root.sh   # 装 vpnctl(/usr/local/sbin)+ 免密 sudoers + App 到 /Applications
+./build.sh             # 编译打包 LiteOC.app
+sudo sh setup-root.sh  # 自动 brew install openconnect(若缺)、装 vpnctl + App 到 /Applications
 ```
 > `setup-root.sh` 把 vpnctl 装到 `/usr/local/sbin`(root:wheel,用户不可写),并在 `/etc/sudoers.d/vpnctl` 仅对 vpnctl 路径免密——最小权限。
 

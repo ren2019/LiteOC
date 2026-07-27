@@ -3,6 +3,7 @@
 set -eu
 DIR="$(cd "$(dirname "$0")" && pwd)"; cd "$DIR"
 APPNAME="LiteOC"
+VER="${LITEOC_VERSION#v}"; VER="${VER:-1.2}"   # CI 传 tag; 本地默认 1.2
 BINDIR="$DIR/build"; APP="$BINDIR/$APPNAME.app"
 
 echo "→ 生成 App 图标…"
@@ -44,7 +45,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundleIdentifier</key><string>local.liteoc.app</string>
   <key>CFBundleExecutable</key><string>$APPNAME</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.2</string>
+  <key>CFBundleShortVersionString</key><string>$VER</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIconName</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
