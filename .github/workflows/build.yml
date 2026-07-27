@@ -19,8 +19,8 @@ jobs:
       - name: Build LiteOC.app
         working-directory: gui
         env:
-          LITEOC_VERSION: ${{ github.ref_name }}   # tag 形如 v1.3; build.sh 会去掉前导 v
-        run: ./build.sh
+          LITEOC_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}   # 仅 tag 传版本; 否则 build.sh 用默认 1.2
+        run: sh ./build.sh
 
       - name: Assemble self-contained zip
         run: |
