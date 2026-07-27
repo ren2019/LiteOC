@@ -1,0 +1,16 @@
+# 构建产物 (build.sh 可重新生成)
+gui/build/
+gui/AppIcon.iconset/
+gui/AppIcon.icns
+gui/icon_1024.png
+gui/menubar_color.png
+gui/menubar_gray.png
+
+# 本地机密 (PIN 走钥匙串; vpn.env 以防万一)
+vpn.env
+
+# macOS
+.DS_Store
+
+# 编辑器
+*.swp

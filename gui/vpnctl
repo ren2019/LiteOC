@@ -1,0 +1,70 @@
+#!/bin/sh
+# vpnctl — LiteOC VPN 控制 (需 root, 由菜单栏 App 经 sudo 免密调用)
+# 用法: vpnctl {start|stop|status} <配置文件路径>
+# 安全: 只用 grep+cut 解析配置 (不 source/不 eval); openconnect 二进制路径写死 (root 执行边界)
+set -eu
+
+cmd="${1:-status}"
+CONF="${2:-}"
+
+# 安全读取配置项 (KEY=VALUE, 取第一个 = 之后全部, 去引号)
+cfg() {
+    [ -n "$CONF" ] && [ -f "$CONF" ] || return 0
+    grep -E "^$1=" "$CONF" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^"//; s/"$//'
+}
+
+V_HOST="$(cfg HOST)"; V_USER="$(cfg USER)"; V_GROUP="$(cfg GROUP)"
+V_CERT="$(cfg SERVERCERT)"; V_IPRE="$(cfg VPN_IP_PATTERN)"
+
+# 必填校验 (fail loudly, 不静默兜底真实值)
+miss=""
+[ -n "$V_HOST" ]   || miss="$miss HOST"
+[ -n "$V_USER" ]   || miss="$miss USER"
+[ -n "$V_GROUP" ]  || miss="$miss GROUP"
+[ -n "$V_CERT" ]   || miss="$miss SERVERCERT"
+[ -n "$miss" ] && { echo "config-error:缺$miss (检查配置文件)"; exit 3; }
+[ -n "$V_IPRE" ] || V_IPRE="10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+"  # 仅状态显示兜底
+
+# openconnect 二进制: 写死的固定清单 (Apple Silicon / Intel)
+BIN=""
+for p in /opt/homebrew/bin/openconnect /usr/local/bin/openconnect; do
+    [ -x "$p" ] && BIN="$p" && break
+done
+[ -n "$BIN" ] || { echo "openconnect-not-found (先 brew install openconnect)"; exit 4; }
+
+PIDFILE="/tmp/liteoc-openconnect.pid"
+LOG="/tmp/liteoc-openconnect.log"
+
+case "$cmd" in
+  start)
+    if pgrep -x openconnect >/dev/null 2>&1; then echo "already-running"; exit 0; fi
+    PIN="$(cat)"   # PIN 从 stdin 读 (App 从钥匙串喂入)
+    [ -n "$PIN" ] || { echo "no-pin"; exit 2; }
+    # stdin 顺序: 密码(第1行) + group(第2行); --background 后台驻留; 输出记日志供取 IP
+    if printf '%s\n%s\n' "$PIN" "$V_GROUP" | "$BIN" --background --syslog --pid-file="$PIDFILE" \
+         --user="$V_USER" --passwd-on-stdin --servercert="$V_CERT" \
+         "https://$V_HOST" >"$LOG" 2>&1; then
+      echo "started"
+    else
+      echo "auth-failed"; exit 1
+    fi
+    ;;
+  stop)
+    if pgrep -x openconnect >/dev/null 2>&1; then
+      pkill -INT -x openconnect; echo "stopped"
+    else
+      echo "not-running"
+    fi
+    ;;
+  status)
+    if pgrep -x openconnect >/dev/null 2>&1; then
+      # IP 优先取 openconnect 日志的 "Configured as <ip>"; 否则 ifconfig 按配置网段兜底
+      ip="$(grep -oE 'Configured as [0-9.]+' "$LOG" 2>/dev/null | tail -1 | cut -d' ' -f3)"
+      [ -n "$ip" ] || ip="$(ifconfig 2>/dev/null | grep -oE "inet ($V_IPRE)" | head -1 | cut -d' ' -f2)"
+      echo "up ${ip:-unknown}"
+    else
+      echo "down"
+    fi
+    ;;
+  *) echo "usage: vpnctl {start|stop|status} [config]" >&2; exit 64 ;;
+esac
