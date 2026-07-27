@@ -1,6 +1,6 @@
 # PRD — LiteOC 配置抽取
 
-> **Status: `ready-for-agent`**(本项目非 git/单人,按用户偏好走本地 markdown 作 issue tracker,无真实 label 系统,以状态行模拟)
+> **Status: 已实现**(D1–D7、D9 实测通过;D8 跨版本合并未做,当前 schema 稳定)。仓库:github.com/ren2019/LiteOC(private)
 > 关联:`CONTEXT.md`(术语)、`docs/adr/0001`、`docs/adr/0002`、`docs/config-spec.md`(决策明细 D1–D9)
 
 ## Problem Statement
