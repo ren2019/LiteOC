@@ -1,46 +1,48 @@
 import Cocoa
 import CoreGraphics
 
-// 渲染菜单栏小图标: 圆角方块 + 白色 globe, 彩色/灰色 两个版本
-func renderTile(bgTop: NSColor, bgBottom: NSColor, _ S: CGFloat, _ outFile: String) {
-    // 白色 globe (SF Symbol 模板 alpha 当 mask)
-    let cfg = NSImage.SymbolConfiguration(pointSize: S * 0.60, weight: .regular)
-    let base = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)!
-        .withSymbolConfiguration(cfg)!
-    let white = NSImage(size: base.size)
-    white.lockFocus()
-    let cw = NSGraphicsContext.current!.cgContext
-    let rw = CGRect(origin: .zero, size: base.size)
-    if let cg = base.cgImage(forProposedRect: nil, context: nil, hints: nil) {
-        cw.clip(to: rw, mask: cg)
-        cw.setFillColor(NSColor.white.cgColor); cw.fill(rw)
-    }
-    white.unlockFocus()
+func color(_ hex: UInt32) -> NSColor {
+    NSColor(srgbRed: CGFloat((hex>>16)&0xff)/255,
+            green: CGFloat((hex>>8)&0xff)/255,
+            blue: CGFloat(hex&0xff)/255, alpha: 1)
+}
 
-    let canvas = NSImage(size: NSSize(width: S, height: S))
-    canvas.lockFocus()
-    let ctx = NSGraphicsContext.current!.cgContext
-    let cr = S * 0.22
-    ctx.addPath(CGPath(roundedRect: CGRect(x: 0, y: 0, width: S, height: S),
-                       cornerWidth: cr, cornerHeight: cr, transform: nil))
-    ctx.clip()
-    let g = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
-        colors: [bgTop.cgColor, bgBottom.cgColor] as CFArray, locations: [0, 1])!
-    ctx.drawLinearGradient(g, start: CGPoint(x: 0, y: S), end: CGPoint(x: S, y: 0), options: [])
-    let sz = white.size
-    white.draw(in: NSRect(x: S/2 - sz.width/2, y: S/2 - sz.height/2, width: sz.width, height: sz.height),
-               from: .zero, operation: .sourceOver, fraction: 1)
-    canvas.unlockFocus()
-
-    let png = NSBitmapImageRep(data: canvas.tiffRepresentation!)!
+func savePNG(_ img: NSImage, _ outFile: String) {
+    let png = NSBitmapImageRep(data: img.tiffRepresentation!)!
         .representation(using: .png, properties: [:])!
     try! png.write(to: URL(fileURLWithPath: outFile))
 }
 
-renderTile(bgTop: NSColor(srgbRed: 0x3B/255, green: 0x82/255, blue: 0xF6/255, alpha: 1),   // 蓝
-           bgBottom: NSColor(srgbRed: 0x1E/255, green: 0x40/255, blue: 0xAF/255, alpha: 1),
-           64, "menubar_color.png")
-renderTile(bgTop: NSColor(srgbRed: 0x9C/255, green: 0xA3/255, blue: 0xAF/255, alpha: 1),   // 灰
-           bgBottom: NSColor(srgbRed: 0x6B/255, green: 0x72/255, blue: 0x80/255, alpha: 1),
-           64, "menubar_gray.png")
-print("wrote menubar_color.png + menubar_gray.png")
+// 透明底 + 单色 SF Symbol (盾), 运行时 isTemplate=true 随菜单栏明暗自适应
+func renderSymbol(_ name: String, _ hex: UInt32, _ S: CGFloat, _ outFile: String) {
+    let base = NSImage(systemSymbolName: name, accessibilityDescription: nil)!
+        .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: S * 0.80, weight: .regular))!
+    let canvas = NSImage(size: NSSize(width: S, height: S))
+    canvas.lockFocus()
+    let ctx = NSGraphicsContext.current!.cgContext
+    let bs = base.size, dx = (S - bs.width) / 2, dy = (S - bs.height) / 2
+    if let cg = base.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+        ctx.clip(to: CGRect(x: dx, y: dy, width: bs.width, height: bs.height), mask: cg)
+        ctx.setFillColor(color(hex).cgColor)
+        ctx.fill(CGRect(x: 0, y: 0, width: S, height: S))
+    }
+    canvas.unlockFocus()
+    savePNG(canvas, outFile)
+}
+
+// 透明底 + 实心单色圆 (状态灯, 无光晕)
+func renderDot(_ hex: UInt32, _ S: CGFloat, _ outFile: String) {
+    let canvas = NSImage(size: NSSize(width: S, height: S))
+    canvas.lockFocus()
+    let ctx = NSGraphicsContext.current!.cgContext
+    let r = S * 0.42
+    ctx.setFillColor(color(hex).cgColor)
+    ctx.fillEllipse(in: CGRect(x: S/2 - r, y: S/2 - r, width: 2*r, height: 2*r))
+    canvas.unlockFocus()
+    savePNG(canvas, outFile)
+}
+
+renderSymbol("lock.shield", 0xFFFFFF, 64, "menubar_gray.png")   // 未连接: 盾 (template)
+renderDot(0x22C55E, 64, "menubar_color.png")                    // 已连接: 绿灯
+renderDot(0xEAB308, 64, "menubar_yellow.png")                   // 连接中: 黄灯
+print("wrote menubar_gray (shield) + menubar_color (green) + menubar_yellow (yellow)")

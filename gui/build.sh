@@ -35,6 +35,7 @@ cp "$BINDIR/$APPNAME" "$APP/Contents/MacOS/$APPNAME"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp menubar_color.png "$APP/Contents/Resources/menubar_color.png"
 cp menubar_gray.png "$APP/Contents/Resources/menubar_gray.png"
+cp menubar_yellow.png "$APP/Contents/Resources/menubar_yellow.png"
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -14,29 +14,31 @@ cfg() {
 }
 
 V_HOST="$(cfg HOST)"; V_USER="$(cfg USER)"; V_GROUP="$(cfg GROUP)"
-V_CERT="$(cfg SERVERCERT)"; V_IPRE="$(cfg VPN_IP_PATTERN)"
+V_CERT="$(cfg SERVERCERT)"
 
-# 必填校验 (SERVERCERT 可选, 留空则首次自动获取 — D9 TOFU)
+# 必填校验 (SERVERCERT 可选, 留空则首次自动获取 — TOFU)
 miss=""
 [ -n "$V_HOST" ]   || miss="$miss HOST"
 [ -n "$V_USER" ]   || miss="$miss USER"
 [ -n "$V_GROUP" ]  || miss="$miss GROUP"
 [ -n "$miss" ] && { echo "config-error:缺$miss (检查配置文件)"; exit 3; }
-[ -n "$V_IPRE" ] || V_IPRE="10\.[0-9]+\.[0-9]+\.[0-9]+|192\.168\.[0-9]+\.[0-9]+"  # 仅状态显示兜底
-
-# openconnect 二进制: 写死的固定清单 (内置优先, brew 回退)
-BIN=""
-for p in /usr/local/libexec/liteoc/openconnect /opt/homebrew/bin/openconnect /usr/local/bin/openconnect; do
-    [ -x "$p" ] && BIN="$p" && break
-done
-[ -n "$BIN" ] || { echo "openconnect-not-found (重新运行 LiteOC 安装器)"; exit 4; }
 
 PIDFILE="/tmp/liteoc-openconnect.pid"
-LOG="/tmp/liteoc-openconnect.log"
+# 日志路径可由 LITEOC_LOG 覆盖 (仅用于 status 测试注入, 生产仍是默认值)
+LOG="${LITEOC_LOG:-/tmp/liteoc-openconnect.log}"
+
+# openconnect 二进制: 写死的固定清单 (内置优先, brew 回退) — 仅 start 需要, status/stop 不依赖
+resolve_bin() {
+    for p in /usr/local/libexec/liteoc/openconnect /opt/homebrew/bin/openconnect /usr/local/bin/openconnect; do
+        [ -x "$p" ] && { echo "$p"; return 0; }
+    done
+    return 1
+}
 
 case "$cmd" in
   start)
     if pgrep -x openconnect >/dev/null 2>&1; then echo "already-running"; exit 0; fi
+    BIN="$(resolve_bin)" || { echo "openconnect-not-found (重新运行 LiteOC 安装器)"; exit 4; }
     PIN="$(cat)"   # PIN 从 stdin 读 (App 从钥匙串喂入)
     [ -n "$PIN" ] || { echo "no-pin"; exit 2; }
     # 证书指纹为空 → 自动探测: 不带 servercert 跑一次, openconnect 会报出 pin (认证前失败, 安全)
@@ -65,11 +67,17 @@ case "$cmd" in
     fi
     ;;
   status)
+    # 三态契约 (无状态快照, 唯一可信状态源):
+    #   down        — 无 openconnect 进程
+    #   connecting  — 进程在, 但未从 openconnect 自身输出拿到有效 IP
+    #   connected <ip> — 进程在, 且拿到有效 IP (仅取自 "Configured as <ip>", 不猜网段)
     if pgrep -x openconnect >/dev/null 2>&1; then
-      # IP 优先取 openconnect 日志的 "Configured as <ip>"; 否则 ifconfig 按配置网段兜底
-      ip="$(grep -oE 'Configured as [0-9.]+' "$LOG" 2>/dev/null | tail -1 | cut -d' ' -f3)"
-      [ -n "$ip" ] || ip="$(ifconfig 2>/dev/null | grep -oE "inet ($V_IPRE)" | head -1 | cut -d' ' -f2)"
-      echo "up ${ip:-unknown}"
+      ip="$(grep -oE 'Configured as [0-9.:a-fA-F]+' "$LOG" 2>/dev/null | tail -1 | cut -d' ' -f3)"
+      if [ -n "$ip" ]; then
+        echo "connected $ip"
+      else
+        echo "connecting"
+      fi
     else
       echo "down"
     fi

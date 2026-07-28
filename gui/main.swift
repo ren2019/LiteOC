@@ -18,7 +18,6 @@ GROUP="your-group"
 SERVERCERT=""                    # 留空 = 首次连接自动获取 (TOFU)
 KEYCHAIN_SERVICE="LiteOC"
 KEYCHAIN_ACCOUNT="pin"
-VPN_IP_PATTERN=""
 """#
 
 // ---- 跑命令 ----
@@ -53,7 +52,7 @@ func loadConfig() -> [String: String] {
     }
     return d
 }
-let CONF_ORDER = ["HOST", "USER", "GROUP", "SERVERCERT", "KEYCHAIN_SERVICE", "KEYCHAIN_ACCOUNT", "VPN_IP_PATTERN"]
+let CONF_ORDER = ["HOST", "USER", "GROUP", "SERVERCERT", "KEYCHAIN_SERVICE", "KEYCHAIN_ACCOUNT"]
 func writeConfig(_ c: [String: String]) {
     var lines = ["# LiteOC 配置 — PIN 在 macOS 钥匙串", "# 保存即生效", ""]
     for k in CONF_ORDER {
@@ -201,6 +200,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var disconnectItem: NSMenuItem!
     var colorImg: NSImage!
     var grayImg: NSImage!
+    var yellowImg: NSImage!
     var busy = false
     var pulseOn = false
     var timer: Timer?
@@ -208,16 +208,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var service = "LiteOC"
     var configWin: ConfigWindow?
 
-    func loadImg(_ name: String) -> NSImage {
+    func loadImg(_ name: String, template: Bool = false) -> NSImage {
         let p = Bundle.main.path(forResource: name, ofType: "png") ?? ""
-        let i = NSImage(contentsOfFile: p) ?? NSImage(); i.isTemplate = false; i.size = NSSize(width: 18, height: 18)
+        let i = NSImage(contentsOfFile: p) ?? NSImage(); i.isTemplate = template; i.size = NSSize(width: 18, height: 18)
         return i
     }
     func reloadConfig() { service = loadConfig()["KEYCHAIN_SERVICE"] ?? "LiteOC" }
 
     func applicationDidFinishLaunching(_ n: Notification) {
         ensureConfig(); reloadConfig()
-        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray")
+        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray", template: true); yellowImg = loadImg("menubar_yellow")
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.imagePosition = .imageOnly; item.button?.image = grayImg
 
@@ -243,12 +243,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         reloadConfig()
         guard !busy else { return }
         let r = run("/usr/bin/sudo", [VPNCTL, "status", ConfPath]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let up = r.hasPrefix("up")
-        item.button?.image = up ? colorImg : grayImg
-        if up {
-            statusLine.title = "● 已连接  " + (r.split(separator: " ").dropFirst().joined(separator: " "))
+        let parts = r.split(separator: " ")
+        let st = String(parts.first ?? "")
+        if st == "connected" {
+            item.button?.image = colorImg
+            statusLine.title = "● 已连接  " + parts.dropFirst().joined(separator: " ")
             connectItem.isEnabled = false; disconnectItem.isEnabled = true
-        } else {
+        } else if st == "connecting" {
+            item.button?.image = yellowImg
+            statusLine.title = "● 连接中…"
+            connectItem.isEnabled = false; disconnectItem.isEnabled = true
+        } else {   // down
+            item.button?.image = grayImg
             let h = loadConfig()["HOST"] ?? ""
             statusLine.title = (h.isEmpty || h.hasPrefix("vpn.example")) ? "○ 未配置 — 点「配置…」" : "○ 未连接"
             connectItem.isEnabled = true; disconnectItem.isEnabled = false
@@ -265,9 +271,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else { timer?.invalidate(); timer = nil; refresh() }
     }
     @objc func busyTick() {
-        pulseOn.toggle(); item.button?.image = pulseOn ? colorImg : grayImg
+        pulseOn.toggle(); item.button?.image = pulseOn ? yellowImg : grayImg
         if let s = connectStart, Date().timeIntervalSince(s) > 30 { setBusy(false); alert("连接超时", "30 秒仍未连上, 请检查网络/配置。"); return }
-        if run("/usr/bin/sudo", [VPNCTL, "status", ConfPath]).hasPrefix("up") { setBusy(false) }
+        let r = run("/usr/bin/sudo", [VPNCTL, "status", ConfPath]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if String(r.split(separator: " ").first ?? "") == "connected" { setBusy(false) }   // 仅拿到有效 IP 才算连上, 不被 connecting 提前误退出
     }
 
     @objc func doConnect() {
