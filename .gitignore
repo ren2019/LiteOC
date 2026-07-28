@@ -5,7 +5,7 @@ gui/AppIcon.icns
 gui/icon_1024.png
 gui/menubar_color.png
 gui/menubar_gray.png
-gui/menubar_yellow.png
+gui/menubar_spinner.png
 gui/menubar_red.png
 
 # 本地机密 (PIN 走钥匙串; vpn.env 以防万一)

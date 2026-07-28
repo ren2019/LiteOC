@@ -1,4 +1,5 @@
 import Cocoa
+import ServiceManagement
 
 // ---- 硬编码 (不进用户配置) ----
 let APPNAME   = "LiteOC"
@@ -200,16 +201,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var statusLine: NSMenuItem!
     var connectItem: NSMenuItem!
     var disconnectItem: NSMenuItem!
+    var autostartItem: NSMenuItem!
     var colorImg: NSImage!
     var grayImg: NSImage!
-    var yellowImg: NSImage!
     var redImg: NSImage!
+    var spinnerFrames: [NSImage] = []
+    var spinStep = 0
+    var spinTimer: Timer?
     var state: St = .disconnected
     var userDisconnecting = false
     var downStreak = 0
     var timer: Timer?
     var connectStart: Date?
-    var pulseOn = false
     var service = "LiteOC"
     var configWin: ConfigWindow?
 
@@ -220,9 +223,39 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func reloadConfig() { service = loadConfig()["KEYCHAIN_SERVICE"] ?? "LiteOC" }
 
+    // 连接中旋转 spinner: 预生成 12 帧 (每 30°), template 随菜单栏明暗自适应; 旋转由独立 spinTimer 驱动
+    func loadSpinnerFrames() {
+        let p = Bundle.main.path(forResource: "menubar_spinner", ofType: "png") ?? ""
+        guard let base = NSImage(contentsOfFile: p) else { return }
+        base.isTemplate = true; base.size = NSSize(width: 18, height: 18)
+        spinnerFrames = (0..<12).map { rotateImg(base, CGFloat($0) * 30) }
+    }
+    func rotateImg(_ img: NSImage, _ deg: CGFloat) -> NSImage {
+        let S: CGFloat = 18
+        let r = NSImage(size: NSSize(width: S, height: S)); r.lockFocus()
+        let ctx = NSGraphicsContext.current!.cgContext
+        ctx.translateBy(x: S/2, y: S/2); ctx.rotate(by: -deg * .pi / 180); ctx.translateBy(x: -S/2, y: -S/2)
+        img.draw(in: NSRect(x: 0, y: 0, width: S, height: S), from: .zero, operation: .sourceOver, fraction: 1)
+        r.unlockFocus(); r.isTemplate = true; r.size = NSSize(width: 18, height: 18)
+        return r
+    }
+    @objc func spinTick() {
+        guard !spinnerFrames.isEmpty else { return }
+        spinStep = (spinStep + 1) % spinnerFrames.count
+        item.button?.image = spinnerFrames[spinStep]
+    }
+    func startSpin() {
+        guard !spinnerFrames.isEmpty else { return }
+        item.button?.image = spinnerFrames[0]
+        guard spinTimer == nil else { return }
+        let t = Timer(timeInterval: 0.08, target: self, selector: #selector(spinTick), userInfo: nil, repeats: true)
+        RunLoop.main.add(t, forMode: .common); spinTimer = t
+    }
+    func stopSpin() { spinTimer?.invalidate(); spinTimer = nil }
+
     func applicationDidFinishLaunching(_ n: Notification) {
         ensureConfig(); reloadConfig()
-        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray", template: true); yellowImg = loadImg("menubar_yellow"); redImg = loadImg("menubar_red")
+        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray", template: true); redImg = loadImg("menubar_red"); loadSpinnerFrames()
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.imagePosition = .imageOnly; item.button?.image = grayImg
 
@@ -237,6 +270,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let setPin = NSMenuItem(title: "设置 PIN…", action: #selector(doSetPin), keyEquivalent: ""); setPin.target = self
         let editConf = NSMenuItem(title: "配置…", action: #selector(doEditConfig), keyEquivalent: ""); editConf.target = self
         menu.addItem(setPin); menu.addItem(editConf); menu.addItem(.separator())
+        autostartItem = NSMenuItem(title: "开机自启动", action: #selector(toggleAutostart), keyEquivalent: ""); autostartItem.target = self
+        autostartItem.state = autostartEnabled() ? .on : .off
+        menu.addItem(autostartItem); menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
 
@@ -261,8 +297,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } else if st == "connected" { enter(.connected, ip: ip) }
             else if st == "connecting" { enter(.connecting) }   // 外部启动的连接, 跟进
         case .connecting:
-            pulse()
             if st == "connected" { enter(.connected, ip: ip) }
+            else if st == "down" {
+                // openconnect 不在了: 主动断开 → disconnected; 启动后退 (>3s) → 连接失败; 刚启动短暂 down 容忍
+                if userDisconnecting { userDisconnecting = false; enter(.disconnected) }
+                else if let s = connectStart, Date().timeIntervalSince(s) > 3 { enter(.errTimeout) }
+            }
             else if let s = connectStart, Date().timeIntervalSince(s) > 30 { enter(.errTimeout) }
         case .connected:
             if st == "connected" { statusLine.title = "● 已连接  " + ip; downStreak = 0 }
@@ -276,9 +316,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         reschedule()
     }
 
-    func pulse() { pulseOn.toggle(); item.button?.image = pulseOn ? yellowImg : grayImg }
-
-    // 状态驱动单一计时器频率: connecting 0.5s (同 tick 兼做脉冲), 其余 4s
+    // 状态驱动单一计时器频率: connecting 0.5s (状态检测), 其余 4s; 连接中的旋转由独立 spinTimer 驱动
     func reschedule() {
         let want: TimeInterval = (state == .connecting) ? 0.5 : 4.0
         if let t = timer, t.timeInterval == want { return }
@@ -289,6 +327,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func enter(_ s: St, ip: String = "") {
         state = s; downStreak = 0
+        if s != .connecting { stopSpin() }
         switch s {
         case .disconnected:
             item.button?.image = grayImg
@@ -296,7 +335,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             statusLine.title = (h.isEmpty || h.hasPrefix("vpn.example")) ? "○ 未配置 — 点「配置…」" : "○ 未连接"
             connectItem.isEnabled = true; disconnectItem.isEnabled = false
         case .connecting:
-            connectStart = Date(); pulseOn = false; item.button?.image = yellowImg
+            connectStart = Date(); spinStep = 0; startSpin()
             statusLine.title = "● 连接中…"; connectItem.isEnabled = false; disconnectItem.isEnabled = true
         case .connected:
             item.button?.image = colorImg; statusLine.title = "● 已连接  " + ip
@@ -356,6 +395,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         configWin?.service = service; configWin?.show()
     }
     func alert(_ t: String, _ m: String) { let a = NSAlert(); a.messageText = t; a.informativeText = m; a.addButton(withTitle: "好"); a.runModal() }
+
+    func autostartEnabled() -> Bool {
+        if #available(macOS 13.0, *) { return SMAppService.mainApp.status == .enabled }
+        return false
+    }
+    @objc func toggleAutostart() {
+        guard #available(macOS 13.0, *) else { alert("不支持", "开机自启动需 macOS 13 及以上。"); return }
+        do {
+            if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
+            else { try SMAppService.mainApp.register() }
+        } catch { alert("设置失败", error.localizedDescription) }
+        autostartItem.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
+    }
 }
 
 let app = NSApplication.shared

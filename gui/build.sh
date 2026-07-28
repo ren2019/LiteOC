@@ -26,7 +26,7 @@ swift make_menubar.swift
 
 echo "→ 编译 Swift…"
 mkdir -p "$BINDIR"
-swiftc main.swift -o "$BINDIR/$APPNAME" -framework Cocoa
+swiftc main.swift -o "$BINDIR/$APPNAME" -framework Cocoa -framework ServiceManagement
 
 echo "→ 打包 .app …"
 rm -rf "$APP"
@@ -35,7 +35,7 @@ cp "$BINDIR/$APPNAME" "$APP/Contents/MacOS/$APPNAME"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp menubar_color.png "$APP/Contents/Resources/menubar_color.png"
 cp menubar_gray.png "$APP/Contents/Resources/menubar_gray.png"
-cp menubar_yellow.png "$APP/Contents/Resources/menubar_yellow.png"
+cp menubar_spinner.png "$APP/Contents/Resources/menubar_spinner.png"
 cp menubar_red.png "$APP/Contents/Resources/menubar_red.png"
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
