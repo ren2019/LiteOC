@@ -193,6 +193,8 @@ class ConfigWindow: NSObject {
     }
 }
 
+enum St { case disconnected, connecting, connected, errTimeout, errAuth, errCert, errDropped }
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     var item: NSStatusItem!
     var statusLine: NSMenuItem!
@@ -201,10 +203,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var colorImg: NSImage!
     var grayImg: NSImage!
     var yellowImg: NSImage!
-    var busy = false
-    var pulseOn = false
+    var redImg: NSImage!
+    var state: St = .disconnected
+    var userDisconnecting = false
+    var downStreak = 0
     var timer: Timer?
     var connectStart: Date?
+    var pulseOn = false
     var service = "LiteOC"
     var configWin: ConfigWindow?
 
@@ -217,7 +222,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         ensureConfig(); reloadConfig()
-        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray", template: true); yellowImg = loadImg("menubar_yellow")
+        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray", template: true); yellowImg = loadImg("menubar_yellow"); redImg = loadImg("menubar_red")
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.imagePosition = .imageOnly; item.button?.image = grayImg
 
@@ -235,52 +240,85 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
 
-        refresh()
-        Timer.scheduledTimer(timeInterval: 4, target: self, selector: #selector(refresh), userInfo: nil, repeats: true)
+        enter(.disconnected)
+        reschedule()
     }
 
-    @objc func refresh() {
+    func runStatus() -> String {
+        run("/usr/bin/sudo", [VPNCTL, "status", ConfPath]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // 单一计时器回调: 消费 vpnctl 三态, 叠加时间/意图维度派生四态机
+    @objc func tick() {
         reloadConfig()
-        guard !busy else { return }
-        let r = run("/usr/bin/sudo", [VPNCTL, "status", ConfPath]).trimmingCharacters(in: .whitespacesAndNewlines)
-        let parts = r.split(separator: " ")
+        let parts = runStatus().split(separator: " ")
         let st = String(parts.first ?? "")
-        if st == "connected" {
-            item.button?.image = colorImg
-            statusLine.title = "● 已连接  " + parts.dropFirst().joined(separator: " ")
-            connectItem.isEnabled = false; disconnectItem.isEnabled = true
-        } else if st == "connecting" {
-            item.button?.image = yellowImg
-            statusLine.title = "● 连接中…"
-            connectItem.isEnabled = false; disconnectItem.isEnabled = true
-        } else {   // down
+        let ip = parts.count > 1 ? parts.dropFirst().joined(separator: " ") : ""
+        switch state {
+        case .disconnected:
+            if userDisconnecting {                 // 主动断开中: 等 status 真正 down 再清标志, 期间不跟进 connecting
+                if st == "down" { userDisconnecting = false }
+            } else if st == "connected" { enter(.connected, ip: ip) }
+            else if st == "connecting" { enter(.connecting) }   // 外部启动的连接, 跟进
+        case .connecting:
+            pulse()
+            if st == "connected" { enter(.connected, ip: ip) }
+            else if let s = connectStart, Date().timeIntervalSince(s) > 30 { enter(.errTimeout) }
+        case .connected:
+            if st == "connected" { statusLine.title = "● 已连接  " + ip; downStreak = 0 }
+            else if st == "down" {                 // 防抖: 连续 2 次 down 才判掉线 (openconnect 内置重连瞬断不误触)
+                downStreak += 1
+                if downStreak >= 2 { enter(.errDropped) }
+            } else { downStreak = 0 }              // connecting: openconnect 内置重连中, 维持 connected
+        case .errTimeout, .errAuth, .errCert, .errDropped:
+            break                                   // 保持红灯, 等用户连接/断开
+        }
+        reschedule()
+    }
+
+    func pulse() { pulseOn.toggle(); item.button?.image = pulseOn ? yellowImg : grayImg }
+
+    // 状态驱动单一计时器频率: connecting 0.5s (同 tick 兼做脉冲), 其余 4s
+    func reschedule() {
+        let want: TimeInterval = (state == .connecting) ? 0.5 : 4.0
+        if let t = timer, t.timeInterval == want { return }
+        timer?.invalidate()
+        let t = Timer(timeInterval: want, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
+        RunLoop.main.add(t, forMode: .common); timer = t
+    }
+
+    func enter(_ s: St, ip: String = "") {
+        state = s; downStreak = 0
+        switch s {
+        case .disconnected:
             item.button?.image = grayImg
             let h = loadConfig()["HOST"] ?? ""
             statusLine.title = (h.isEmpty || h.hasPrefix("vpn.example")) ? "○ 未配置 — 点「配置…」" : "○ 未连接"
             connectItem.isEnabled = true; disconnectItem.isEnabled = false
+        case .connecting:
+            connectStart = Date(); pulseOn = false; item.button?.image = yellowImg
+            statusLine.title = "● 连接中…"; connectItem.isEnabled = false; disconnectItem.isEnabled = true
+        case .connected:
+            item.button?.image = colorImg; statusLine.title = "● 已连接  " + ip
+            connectItem.isEnabled = false; disconnectItem.isEnabled = true
+        case .errTimeout: showError("连接超时", "检查网络/网关可达性")
+        case .errAuth: showError("PIN 有误", "检查 PIN")
+        case .errCert: showError("证书获取失败", "「配置…」手动填 pin-sha256")
+        case .errDropped: showError("连接已断开", "点「连接」重试")
         }
+        reschedule()
     }
-
-    func setBusy(_ on: Bool) {
-        busy = on
-        if on {
-            connectItem.isEnabled = false; disconnectItem.isEnabled = false; statusLine.title = "… 连接中"
-            pulseOn = false; connectStart = Date(); timer?.invalidate()
-            let t = Timer(timeInterval: 0.35, target: self, selector: #selector(busyTick), userInfo: nil, repeats: true)
-            RunLoop.main.add(t, forMode: .common); timer = t
-        } else { timer?.invalidate(); timer = nil; refresh() }
-    }
-    @objc func busyTick() {
-        pulseOn.toggle(); item.button?.image = pulseOn ? yellowImg : grayImg
-        if let s = connectStart, Date().timeIntervalSince(s) > 30 { setBusy(false); alert("连接超时", "30 秒仍未连上, 请检查网络/配置。"); return }
-        let r = run("/usr/bin/sudo", [VPNCTL, "status", ConfPath]).trimmingCharacters(in: .whitespacesAndNewlines)
-        if String(r.split(separator: " ").first ?? "") == "connected" { setBusy(false) }   // 仅拿到有效 IP 才算连上, 不被 connecting 提前误退出
+    func showError(_ t: String, _ d: String) {
+        item.button?.image = redImg; statusLine.title = "● \(t) — \(d)"
+        connectItem.isEnabled = true; disconnectItem.isEnabled = true
     }
 
     @objc func doConnect() {
         reloadConfig()
+        if case .connecting = state { return }      // 已在连接, 忽略重复点击
         guard let pin = pinGet(service) else { alert("未设置 PIN", "请先在「配置…」里存 PIN。"); return }
-        setBusy(true)
+        userDisconnecting = false
+        enter(.connecting)
         DispatchQueue.global().async {
             let out = run("/usr/bin/sudo", [VPNCTL, "start", ConfPath], stdin: pin)
             let lines = out.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespaces) }
@@ -290,28 +328,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let r = lines.last(where: { ["started", "auth-failed", "no-pin", "already-running",
                                          "cert-discover-failed", "openconnect-not-found"].contains($0) }) ?? lines.last ?? ""
             DispatchQueue.main.async {
+                if self.state != .connecting { return }   // 已离开 connecting (用户已断开等), 丢弃迟到的结果
                 switch r {
-                case "auth-failed": self.setBusy(false); self.alert("连接失败", "用户名或密码错误 —— 检查 PIN。")
-                case "cert-discover-failed": self.setBusy(false); self.alert("证书获取失败", "无法自动获取网关证书, 请在「配置…」手动填 pin-sha256。")
-                case "openconnect-not-found": self.setBusy(false); self.alert("缺少依赖", "重新运行 LiteOC 安装器(.pkg)以补齐内置 openconnect。")
-                case "no-pin": self.setBusy(false); self.alert("连接失败", "未收到 PIN。")
-                default: break   // started / already-running: 等 busyTick 检测 up
+                case "auth-failed": self.enter(.errAuth)
+                case "cert-discover-failed": self.enter(.errCert)
+                case "openconnect-not-found": self.enter(.disconnected); self.alert("缺少依赖", "重新运行 LiteOC 安装器(.pkg)以补齐内置 openconnect。")
+                case "no-pin": self.enter(.disconnected)
+                default: break   // started / already-running: 等 tick 检测 connected
                 }
             }
         }
     }
     @objc func doDisconnect() {
-        DispatchQueue.global().async { _ = run("/usr/bin/sudo", [VPNCTL, "stop", ConfPath]); DispatchQueue.main.async { self.refresh() } }
+        userDisconnecting = true
+        enter(.disconnected)                        // UI 立即回灰盾, 不等 stop 返回
+        DispatchQueue.global().async { _ = run("/usr/bin/sudo", [VPNCTL, "stop", ConfPath]) }
     }
     @objc func doSetPin() {
         let a = NSAlert(); a.messageText = "设置 \(APPNAME) PIN"; a.informativeText = "存入 macOS 钥匙串 (服务 \(service))。"
         a.addButton(withTitle: "保存"); a.addButton(withTitle: "取消")
         let f = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24)); f.placeholderString = "PIN 码"
         a.accessoryView = f; a.window.initialFirstResponder = f
-        if a.runModal() == .alertFirstButtonReturn, !f.stringValue.isEmpty { pinSet(service, f.stringValue); refresh() }
+        if a.runModal() == .alertFirstButtonReturn, !f.stringValue.isEmpty { pinSet(service, f.stringValue); tick() }
     }
     @objc func doEditConfig() {
-        if configWin == nil { configWin = ConfigWindow(service: service) { self.reloadConfig(); self.refresh() } }
+        if configWin == nil { configWin = ConfigWindow(service: service) { self.reloadConfig(); self.tick() } }
         configWin?.service = service; configWin?.show()
     }
     func alert(_ t: String, _ m: String) { let a = NSAlert(); a.messageText = t; a.informativeText = m; a.addButton(withTitle: "好"); a.runModal() }
