@@ -1,6 +1,6 @@
 #!/bin/sh
 # vpnctl — LiteOC VPN 控制 (需 root, 由菜单栏 App 经 sudo 免密调用)
-# 用法: vpnctl {start|stop|status} <配置文件路径>
+# 用法: vpnctl {start|stop|repair|network|status} <配置文件路径>
 # 安全: 只用 grep+cut 解析配置 (不 source/不 eval); openconnect 二进制路径写死 (root 执行边界)
 set -eu
 
@@ -27,51 +27,325 @@ PIDFILE="/tmp/liteoc-openconnect.pid"
 # 日志路径可由 LITEOC_LOG 覆盖 (仅用于 status 测试注入, 生产仍是默认值)
 LOG="${LITEOC_LOG:-/tmp/liteoc-openconnect.log}"
 
+# root 运行时固定系统命令路径;只有非 root 契约测试可通过 PATH 注入 fake 命令。
+ROUTE=/sbin/route; IFCONFIG=/sbin/ifconfig; DSCACHEUTIL=/usr/bin/dscacheutil; AWK=/usr/bin/awk
+PGREP=/usr/bin/pgrep; PKILL=/usr/bin/pkill; SLEEP=/bin/sleep; IPCONFIG=/usr/sbin/ipconfig
+ROUTE_STATE_FILE=/var/run/liteoc-openconnect.routes; TEST_OPENCONNECT_BIN=""
+if [ "${LITEOC_TESTING:-0}" = 1 ] && [ "$(/usr/bin/id -u)" -ne 0 ]; then
+    ROUTE=route; IFCONFIG=ifconfig; DSCACHEUTIL=dscacheutil; AWK=awk
+    PGREP=pgrep; PKILL=pkill; SLEEP=sleep; IPCONFIG=ipconfig
+    ROUTE_STATE_FILE="${LITEOC_ROUTE_STATE_FILE:-/tmp/liteoc-openconnect-test.routes}"
+    TEST_OPENCONNECT_BIN="${LITEOC_OPENCONNECT_BIN:-}"
+fi
+
 # openconnect 二进制: 写死的固定清单 (内置优先, brew 回退) — 仅 start 需要, status/stop 不依赖
 resolve_bin() {
+    [ -n "$TEST_OPENCONNECT_BIN" ] && [ -x "$TEST_OPENCONNECT_BIN" ] && { echo "$TEST_OPENCONNECT_BIN"; return 0; }
     for p in /usr/local/libexec/liteoc/openconnect /opt/homebrew/bin/openconnect /usr/local/bin/openconnect; do
         [ -x "$p" ] && { echo "$p"; return 0; }
     done
     return 1
 }
 
+# 只解析当前 Profile 的 IPv4 网关。HOST 支持 hostname:port / IPv4:port / 裸 hostname。
+gateway_name() {
+    case "$V_HOST" in
+      \[*\]:*) printf '%s\n' "$V_HOST" | sed 's/^\[\(.*\)\]:[0-9][0-9]*$/\1/' ;;
+      *:*) printf '%s\n' "${V_HOST%:*}" ;;
+      *) printf '%s\n' "$V_HOST" ;;
+    esac
+}
+
+gateway_ips() {
+    name="$(gateway_name)"
+    case "$name" in
+      ''|*[!0-9.]*)
+        ips="$("$DSCACHEUTIL" -q host -a name "$name" 2>/dev/null \
+                 | "$AWK" '$1 == "ip_address:" && $2 ~ /^[0-9]+\./ { print $2 }')"
+        ;;
+      *) ips="$name" ;;
+    esac
+    [ -n "$ips" ] || return 1
+    printf '%s\n' "$ips"
+}
+
+route_value() { # route-output field-name
+    printf '%s\n' "$1" | "$AWK" -v key="$2:" '$1 == key { print $2; exit }'
+}
+
+load_exact_gateway_route() {
+    ip="$1"
+    out="$("$ROUTE" -n get "$ip" 2>/dev/null)" || return 2
+    dest="$(route_value "$out" destination)"
+    flags="$(route_value "$out" flags)"
+    [ "$dest" = "$ip" ] || return 1
+    case "$flags" in *HOST*) ;; *) return 1 ;; esac
+    case "$flags" in *STATIC*) ;; *) return 1 ;; esac
+
+    EXACT_ROUTE_GATEWAY="$(route_value "$out" gateway)"
+    EXACT_ROUTE_INTERFACE="$(route_value "$out" interface)"
+    return 0
+}
+
+# 返回 0=确认是过期主机路由,1=没有过期路由,2=存在主机路由但无法安全判断。
+gateway_route_is_stale() {
+    if load_exact_gateway_route "$1"; then :; else rc=$?; return "$rc"; fi
+
+    gw="$EXACT_ROUTE_GATEWAY"; iface="$EXACT_ROUTE_INTERFACE"
+    [ -n "$gw" ] && [ -n "$iface" ] || return 2
+    if ! "$IFCONFIG" "$iface" >/dev/null 2>&1; then return 0; fi
+
+    default="$("$ROUTE" -n get default 2>/dev/null)" || return 2
+    current_gw="$(route_value "$default" gateway)"
+    current_iface="$(route_value "$default" interface)"
+    [ -n "$current_gw" ] && [ -n "$current_iface" ] || return 2
+    [ "$gw" = "$current_gw" ] && [ "$iface" = "$current_iface" ] && return 1
+    return 0
+}
+
+delete_exact_gateway_route() {
+    ip="$1"
+    "$ROUTE" -n delete -host "$ip" >/dev/null 2>&1 || return 1
+    if load_exact_gateway_route "$ip"; then return 1; fi
+    rc=$?; [ "$rc" -eq 2 ] && return 1
+    return 0
+}
+
+gateway_route_is_exact() {
+    load_exact_gateway_route "$1"
+}
+
+session_gateway_routes() {
+    ips="$(gateway_ips)" || return 2
+    for ip in $ips; do
+      if gateway_route_is_exact "$ip"; then
+        printf '%s\n' "$ip"
+      else
+        rc=$?; [ "$rc" -eq 2 ] && return 2
+      fi
+    done
+    return 0
+}
+
+list_has_ip() { # whitespace-separated-list ip
+    for listed_ip in $1; do [ "$listed_ip" = "$2" ] && return 0; done
+    return 1
+}
+
+write_owned_gateway_routes() {
+    routes="$1"
+    if [ -z "$routes" ]; then /bin/rm -f "$ROUTE_STATE_FILE"; return 0; fi
+    tmp_state="$ROUTE_STATE_FILE.$$"
+    (umask 077; printf '%s\n' "$routes" > "$tmp_state") || return 3
+    /bin/mv -f "$tmp_state" "$ROUTE_STATE_FILE" || return 3
+}
+
+record_owned_gateway_routes() {
+    preexisting="$1"
+    current_routes="$(session_gateway_routes)" || return $?
+    owned=""
+    for ip in $current_routes; do
+      list_has_ip "$preexisting" "$ip" || owned="${owned}${owned:+ }$ip"
+    done
+    write_owned_gateway_routes "$owned"
+}
+
+cleanup_owned_gateway_routes() {
+    [ -f "$ROUTE_STATE_FILE" ] || return 0
+    configured="$(gateway_ips)" || return 2
+    owned="$(/bin/cat "$ROUTE_STATE_FILE" 2>/dev/null)" || return 2
+    remaining=""
+    for ip in $owned; do
+      if ! list_has_ip "$configured" "$ip"; then
+        remaining="${remaining}${remaining:+ }$ip"
+      else
+        if gateway_route_is_exact "$ip"; then
+          delete_exact_gateway_route "$ip" || return 3
+          ROUTE_REPAIRED=1
+          /usr/bin/logger -t LiteOC "repaired recorded route for configured VPN gateway" 2>/dev/null || true
+        else
+          rc=$?; [ "$rc" -eq 2 ] && return 2
+        fi
+      fi
+    done
+    if [ -n "$remaining" ]; then write_owned_gateway_routes "$remaining" || return $?; return 2; fi
+    /bin/rm -f "$ROUTE_STATE_FILE" || return 3
+    return 0
+}
+
+cleanup_new_gateway_routes() {
+    preexisting="$1"
+    current_routes="$(session_gateway_routes)" || return $?
+    for ip in $current_routes; do
+      if ! list_has_ip "$preexisting" "$ip"; then
+        delete_exact_gateway_route "$ip" || return 3
+        ROUTE_REPAIRED=1
+      fi
+    done
+    return 0
+}
+
+# 返回 0=检查完成,2=无法安全判断,3=精确删除或删除后验证失败。
+cleanup_stale_gateway_routes() {
+    ips="$(gateway_ips)" || return 2
+    for ip in $ips; do
+      if gateway_route_is_stale "$ip"; then
+        delete_exact_gateway_route "$ip" || return 3
+        ROUTE_REPAIRED=1
+        /usr/bin/logger -t LiteOC "repaired stale route for configured VPN gateway" 2>/dev/null || true
+      else
+        rc=$?
+        [ "$rc" -eq 2 ] && return 2
+      fi
+    done
+    return 0
+}
+
+repair_gateway_routes() {
+    ROUTE_REPAIRED=0
+    cleanup_owned_gateway_routes || return $?
+    cleanup_stale_gateway_routes
+}
+
+has_stale_gateway_route() {
+    ips="$(gateway_ips)" || return 2
+    for ip in $ips; do
+      if gateway_route_is_stale "$ip"; then
+        return 0
+      else
+        rc=$?; [ "$rc" -eq 2 ] && return 2
+      fi
+    done
+    return 1
+}
+
+has_owned_gateway_route() {
+    [ -f "$ROUTE_STATE_FILE" ] || return 1
+    configured="$(gateway_ips)" || return 2
+    owned="$(/bin/cat "$ROUTE_STATE_FILE" 2>/dev/null)" || return 2
+    for ip in $owned; do
+      list_has_ip "$configured" "$ip" || return 2
+      if gateway_route_is_exact "$ip"; then return 0; fi
+      rc=$?; [ "$rc" -eq 2 ] && return 2
+    done
+    return 1
+}
+
+has_recoverable_gateway_route() {
+    if has_owned_gateway_route; then return 0; else rc=$?; [ "$rc" -eq 2 ] && return 2; fi
+    has_stale_gateway_route
+}
+
+route_failure() {
+    case "$1" in
+      2) echo "route-check-failed"; exit 6 ;;
+      *) echo "route-cleanup-failed"; exit 7 ;;
+    esac
+}
+
+stop_openconnect_and_wait() {
+    "$PKILL" -INT -x openconnect 2>/dev/null || true
+    waited=0
+    while "$PGREP" -x openconnect >/dev/null 2>&1; do
+      [ "$waited" -ge 10 ] && return 8
+      "$SLEEP" 1; waited=$((waited+1))
+    done
+    return 0
+}
+
 case "$cmd" in
   start)
-    if pgrep -x openconnect >/dev/null 2>&1; then echo "already-running"; exit 0; fi
+    if "$PGREP" -x openconnect >/dev/null 2>&1; then echo "already-running"; exit 0; fi
+    if repair_gateway_routes; then :; else rc=$?; route_failure "$rc"; fi
     BIN="$(resolve_bin)" || { echo "openconnect-not-found (重新运行 LiteOC 安装器)"; exit 4; }
     PIN="$(cat)"   # PIN 从 stdin 读 (App 从钥匙串喂入)
     [ -n "$PIN" ] || { echo "no-pin"; exit 2; }
+    preexisting_routes="$(session_gateway_routes)" || route_failure $?
     # 证书指纹为空 → 自动探测: 不带 servercert 跑一次, openconnect 会报出 pin (认证前失败, 安全)
     DISCOVERED=""
     if [ -z "$V_CERT" ]; then
       V_CERT="$(echo | "$BIN" --user="$V_USER" --passwd-on-stdin "https://$V_HOST" 2>&1 \
                 | grep -oE 'pin-sha256:[A-Za-z0-9+/=]+' | head -1 || true)"
-      [ -n "$V_CERT" ] || { echo "cert-discover-failed"; exit 5; }
+      if [ -z "$V_CERT" ]; then
+        ROUTE_REPAIRED=0
+        cleanup_new_gateway_routes "$preexisting_routes" || route_failure $?
+        cleanup_stale_gateway_routes || route_failure $?
+        echo "cert-discover-failed"; exit 5
+      fi
       DISCOVERED="$V_CERT"
     fi
     # stdin 顺序: 密码(第1行) + group(第2行); --background 后台驻留; 输出记日志供取 IP
     if printf '%s\n%s\n' "$PIN" "$V_GROUP" | "$BIN" --background --syslog --pid-file="$PIDFILE" \
          --user="$V_USER" --passwd-on-stdin --servercert="$V_CERT" \
          "https://$V_HOST" >"$LOG" 2>&1; then
+      if record_owned_gateway_routes "$preexisting_routes"; then :; else
+        rc=$?; stop_openconnect_and_wait || { echo "stop-timeout"; exit 8; }
+        ROUTE_REPAIRED=0; cleanup_new_gateway_routes "$preexisting_routes" || route_failure $?
+        route_failure "$rc"
+      fi
       [ -n "$DISCOVERED" ] && echo "discovered-cert:$DISCOVERED"   # 让 App 回写到配置
       echo "started"
     else
+      ROUTE_REPAIRED=0
+      cleanup_new_gateway_routes "$preexisting_routes" || route_failure $?
+      cleanup_stale_gateway_routes || route_failure $?
       echo "auth-failed"; exit 1
     fi
     ;;
   stop)
-    if pgrep -x openconnect >/dev/null 2>&1; then
-      pkill -INT -x openconnect; echo "stopped"
+    if "$PGREP" -x openconnect >/dev/null 2>&1; then
+      session_routes=""; route_scan_rc=0
+      session_routes="$(session_gateway_routes)" || route_scan_rc=$?
+      stop_openconnect_and_wait || { echo "stop-timeout"; exit 8; }
+      [ "$route_scan_rc" -eq 0 ] || route_failure "$route_scan_rc"
+      for ip in $session_routes; do
+        if gateway_route_is_exact "$ip"; then
+          delete_exact_gateway_route "$ip" || route_failure 3
+        fi
+      done
+      if repair_gateway_routes; then echo "stopped"; else rc=$?; route_failure "$rc"; fi
     else
-      echo "not-running"
+      if repair_gateway_routes; then echo "not-running"; else rc=$?; route_failure "$rc"; fi
     fi
     ;;
+  repair)
+    if "$PGREP" -x openconnect >/dev/null 2>&1; then echo "already-running"; exit 0; fi
+    if repair_gateway_routes; then
+      [ "$ROUTE_REPAIRED" -eq 1 ] && echo "route-repaired" || echo "route-clean"
+    else
+      rc=$?; route_failure "$rc"
+    fi
+    ;;
+  network)
+    default="$("$ROUTE" -n get default 2>/dev/null)" || { echo "network-unavailable"; exit 9; }
+    current_gw="$(route_value "$default" gateway)"
+    current_iface="$(route_value "$default" interface)"
+    [ -n "$current_gw" ] && [ -n "$current_iface" ] || { echo "network-unavailable"; exit 9; }
+    physical_iface="$current_iface"; physical_route_gw="$current_gw"
+    case "$physical_iface" in
+      utun*)
+        ips="$(gateway_ips)" || { echo "network-unavailable"; exit 9; }
+        gateway_ip="$(printf '%s\n' "$ips" | "$AWK" 'NR == 1 { print; exit }')"
+        gateway_route="$("$ROUTE" -n get "$gateway_ip" 2>/dev/null)" || { echo "network-unavailable"; exit 9; }
+        physical_iface="$(route_value "$gateway_route" interface)"
+        physical_route_gw="$(route_value "$gateway_route" gateway)"
+        ;;
+    esac
+    case "$physical_iface" in ''|lo*|utun*) echo "network-unavailable"; exit 9 ;; esac
+    physical_ip="$("$IPCONFIG" getifaddr "$physical_iface" 2>/dev/null)" || { echo "network-unavailable"; exit 9; }
+    physical_router="$("$IPCONFIG" getoption "$physical_iface" router 2>/dev/null || true)"
+    [ -n "$physical_router" ] || physical_router="$physical_route_gw"
+    [ -n "$physical_ip" ] && [ -n "$physical_router" ] || { echo "network-unavailable"; exit 9; }
+    echo "network $physical_iface $physical_ip $physical_router"
+    ;;
   status)
-    # 三态契约 (无状态快照, 唯一可信状态源):
+    # 状态快照契约:
     #   down        — 无 openconnect 进程
+    #   route-stale — 无进程,但当前 Profile 网关仍有过期静态主机路由
+    #   route-check-failed — 无进程,但路由状态无法安全判断
     #   connecting  — 进程在, 但未从 openconnect 自身输出拿到有效 IP
     #   connected <ip> — 进程在, 且拿到有效 IP (仅取自 "Configured as <ip>", 不猜网段)
-    if pgrep -x openconnect >/dev/null 2>&1; then
+    if "$PGREP" -x openconnect >/dev/null 2>&1; then
       ip="$(grep -oE 'Configured as [0-9.:a-fA-F]+' "$LOG" 2>/dev/null | tail -1 | cut -d' ' -f3)"
       if [ -n "$ip" ]; then
         echo "connected $ip"
@@ -79,8 +353,12 @@ case "$cmd" in
         echo "connecting"
       fi
     else
-      echo "down"
+      if has_recoverable_gateway_route; then
+        echo "route-stale"
+      else
+        rc=$?; [ "$rc" -eq 2 ] && echo "route-check-failed" || echo "down"
+      fi
     fi
     ;;
-  *) echo "usage: vpnctl {start|stop|status} [config]" >&2; exit 64 ;;
+  *) echo "usage: vpnctl {start|stop|repair|network|status} [config]" >&2; exit 64 ;;
 esac

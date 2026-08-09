@@ -6,7 +6,7 @@ LiteOC 菜单栏 App 的构建脚本与源码。用户向说明见[根 README](.
 | 文件 | 作用 |
 |---|---|
 | `main.swift` | App 源码:菜单栏图标、连接/断开/配置窗口/PIN、4s 轮询、TOFU pin 回写 |
-| `vpnctl` | root 助手:`start`(读 stdin 的 PIN → 后台 openconnect;证书空则自动探测)/ `stop`(SIGINT)/ `status` |
+| `vpnctl` | root 助手:`start`(连接前修复过期网关路由)/ `stop`(SIGINT + 等待退出 + 路由验证)/ `repair`(启动恢复)/ `network`(物理接口/IP/网关指纹)/ `status` |
 | `build.sh` | 编译 + 生成图标(AppIcon + 菜单栏彩/灰)+ 打包 `LiteOC.app` + 签名(无需 sudo) |
 | `setup-root.sh` | 一次性装 root 部分:`vpnctl` → `/usr/local/sbin`、写免密 sudoers、App → `/Applications`、校验 openconnect(需 sudo) |
 | `make_icon.swift` | 生成 1024 App 图标(蓝底地球) |

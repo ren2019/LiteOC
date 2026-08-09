@@ -194,7 +194,12 @@ class ConfigWindow: NSObject {
     }
 }
 
-enum St { case disconnected, connecting, connected, errTimeout, errAuth, errCert, errDropped }
+enum TunnelState {
+    case repairing, disconnected, connecting, disconnecting, connected
+    case errTimeout, errAuth, errCert, errDropped, errRoute, errStop, errNetworkChanged
+}
+
+struct NetworkFingerprint: Equatable { let rawValue: String }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var item: NSStatusItem!
@@ -208,11 +213,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var spinnerFrames: [NSImage] = []
     var spinStep = 0
     var spinTimer: Timer?
-    var state: St = .disconnected
-    var userDisconnecting = false
+    var state: TunnelState = .disconnected
     var downStreak = 0
     var timer: Timer?
     var connectStart: Date?
+    var connectionNetworkFingerprint: NetworkFingerprint?
+    let vpnQueue = DispatchQueue(label: "local.liteoc.control")
     var service = "LiteOC"
     var configWin: ConfigWindow?
 
@@ -276,42 +282,77 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
 
-        enter(.disconnected)
-        reschedule()
+        repairAtLaunch()
     }
 
     func runStatus() -> String {
         run("/usr/bin/sudo", [VPNCTL, "status", ConfPath]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
+    func runNetwork() -> NetworkFingerprint? {
+        let value = run("/usr/bin/sudo", [VPNCTL, "network", ConfPath]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.hasPrefix("network ") ? NetworkFingerprint(rawValue: value) : nil
+    }
+    func controlToken(_ output: String, _ allowed: [String]) -> String {
+        let lines = output.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespaces) }
+        for line in lines.reversed() {
+            if let token = allowed.first(where: { line == $0 || line.hasPrefix($0 + " ") }) { return token }
+        }
+        return lines.last ?? ""
+    }
+    func repairAtLaunch() {
+        let host = loadConfig()["HOST"] ?? ""
+        if host.isEmpty || host.hasPrefix("vpn.example") { enter(.disconnected); return }
+        enter(.repairing)
+        vpnQueue.async {
+            let token = self.controlToken(run("/usr/bin/sudo", [VPNCTL, "repair", ConfPath]),
+                                          ["route-clean", "route-repaired", "already-running",
+                                           "route-check-failed", "route-cleanup-failed"])
+            DispatchQueue.main.async {
+                switch token {
+                case "route-clean", "route-repaired", "already-running": self.enter(.disconnected); self.tick()
+                default: self.enter(.errRoute)
+                }
+            }
+        }
+    }
 
-    // 单一计时器回调: 消费 vpnctl 三态, 叠加时间/意图维度派生四态机
+    // 单一计时器回调: 消费 vpnctl 状态快照,叠加时间/意图维度派生 UI 状态机
     @objc func tick() {
         reloadConfig()
+        if state == .connecting || state == .connected, let baseline = connectionNetworkFingerprint {
+            guard let current = runNetwork() else { beginDisconnect(after: .errNetworkChanged); return }
+            if current != baseline { beginDisconnect(after: .errNetworkChanged); return }
+        }
         let parts = runStatus().split(separator: " ")
         let st = String(parts.first ?? "")
         let ip = parts.count > 1 ? parts.dropFirst().joined(separator: " ") : ""
+        if st == "route-check-failed", state == .disconnected || state == .connecting || state == .connected {
+            enter(.errRoute)
+            return
+        }
         switch state {
         case .disconnected:
-            if userDisconnecting {                 // 主动断开中: 等 status 真正 down 再清标志, 期间不跟进 connecting
-                if st == "down" { userDisconnecting = false }
-            } else if st == "connected" { enter(.connected, ip: ip) }
+            if st == "connected" { enter(.connected, ip: ip) }
             else if st == "connecting" { enter(.connecting) }   // 外部启动的连接, 跟进
+            else if st == "route-stale" { beginDisconnect(after: .disconnected); return }
         case .connecting:
             if st == "connected" { enter(.connected, ip: ip) }
+            else if st == "route-stale" { beginDisconnect(after: .errNetworkChanged); return }
             else if st == "down" {
-                // openconnect 不在了: 主动断开 → disconnected; 启动后退 (>3s) → 连接失败; 刚启动短暂 down 容忍
-                if userDisconnecting { userDisconnecting = false; enter(.disconnected) }
-                else if let s = connectStart, Date().timeIntervalSince(s) > 3 { enter(.errTimeout) }
+                // openconnect 启动后退出 (>3s) → 连接失败;刚启动短暂 down 容忍
+                if let s = connectStart, Date().timeIntervalSince(s) > 3 { beginDisconnect(after: .errTimeout); return }
             }
-            else if let s = connectStart, Date().timeIntervalSince(s) > 30 { enter(.errTimeout) }
+            else if let s = connectStart, Date().timeIntervalSince(s) > 30 { beginDisconnect(after: .errTimeout); return }
         case .connected:
             if st == "connected" { statusLine.title = "● 已连接  " + ip; downStreak = 0 }
+            else if st == "route-stale" { beginDisconnect(after: .errNetworkChanged); return }
             else if st == "down" {                 // 防抖: 连续 2 次 down 才判掉线 (openconnect 内置重连瞬断不误触)
                 downStreak += 1
-                if downStreak >= 2 { enter(.errDropped) }
+                if downStreak >= 2 { beginDisconnect(after: .errDropped); return }
             } else { downStreak = 0 }              // connecting: openconnect 内置重连中, 维持 connected
-        case .errTimeout, .errAuth, .errCert, .errDropped:
-            break                                   // 保持红灯, 等用户连接/断开
+        case .repairing, .disconnecting, .errTimeout, .errAuth, .errCert, .errDropped,
+             .errRoute, .errStop, .errNetworkChanged:
+            break                                   // 保持当前状态,等后台操作或用户动作
         }
         reschedule()
     }
@@ -325,10 +366,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         RunLoop.main.add(t, forMode: .common); timer = t
     }
 
-    func enter(_ s: St, ip: String = "") {
+    func enter(_ s: TunnelState, ip: String = "") {
         state = s; downStreak = 0
         if s != .connecting { stopSpin() }
         switch s {
+        case .repairing:
+            item.button?.image = grayImg; statusLine.title = "○ 正在检查残留路由…"
+            connectItem.isEnabled = false; disconnectItem.isEnabled = false
         case .disconnected:
             item.button?.image = grayImg
             let h = loadConfig()["HOST"] ?? ""
@@ -337,13 +381,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .connecting:
             connectStart = Date(); spinStep = 0; startSpin()
             statusLine.title = "● 连接中…"; connectItem.isEnabled = false; disconnectItem.isEnabled = true
+        case .disconnecting:
+            item.button?.image = grayImg; statusLine.title = "○ 正在断开并清理路由…"
+            connectItem.isEnabled = false; disconnectItem.isEnabled = false
         case .connected:
+            guard let current = runNetwork() else { beginDisconnect(after: .errNetworkChanged); return }
+            connectionNetworkFingerprint = current
             item.button?.image = colorImg; statusLine.title = "● 已连接  " + ip
             connectItem.isEnabled = false; disconnectItem.isEnabled = true
         case .errTimeout: showError("连接超时", "检查网络/网关可达性")
         case .errAuth: showError("PIN 有误", "检查 PIN")
         case .errCert: showError("证书获取失败", "「配置…」手动填 pin-sha256")
         case .errDropped: showError("连接已断开", "点「连接」重试")
+        case .errRoute: showError("路由检查/清理失败", "请重试断开或连接")
+        case .errStop: showError("断开未完成", "OpenConnect 未按时退出")
+        case .errNetworkChanged:
+            showError("网络已变化", "请重新连接")
+            disconnectItem.isEnabled = false
         }
         reschedule()
     }
@@ -356,16 +410,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         reloadConfig()
         if case .connecting = state { return }      // 已在连接, 忽略重复点击
         guard let pin = pinGet(service) else { alert("未设置 PIN", "请先在「配置…」里存 PIN。"); return }
-        userDisconnecting = false
+        guard let current = runNetwork() else { enter(.errRoute); return }
+        connectionNetworkFingerprint = current
         enter(.connecting)
-        DispatchQueue.global().async {
+        vpnQueue.async {
             let out = run("/usr/bin/sudo", [VPNCTL, "start", ConfPath], stdin: pin)
             let lines = out.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespaces) }
             if let dc = lines.first(where: { $0.hasPrefix("discovered-cert:") }) {
                 setConfigValue("SERVERCERT", String(dc.dropFirst("discovered-cert:".count)))   // TOFU 回写
             }
-            let r = lines.last(where: { ["started", "auth-failed", "no-pin", "already-running",
-                                         "cert-discover-failed", "openconnect-not-found"].contains($0) }) ?? lines.last ?? ""
+            let r = self.controlToken(out, ["started", "auth-failed", "no-pin", "already-running",
+                                            "cert-discover-failed", "openconnect-not-found",
+                                            "route-check-failed", "route-cleanup-failed"])
             DispatchQueue.main.async {
                 if self.state != .connecting { return }   // 已离开 connecting (用户已断开等), 丢弃迟到的结果
                 switch r {
@@ -373,15 +429,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 case "cert-discover-failed": self.enter(.errCert)
                 case "openconnect-not-found": self.enter(.disconnected); self.alert("缺少依赖", "重新运行 LiteOC 安装器(.pkg)以补齐内置 openconnect。")
                 case "no-pin": self.enter(.disconnected)
+                case "route-check-failed", "route-cleanup-failed": self.enter(.errRoute)
                 default: break   // started / already-running: 等 tick 检测 connected
                 }
             }
         }
     }
     @objc func doDisconnect() {
-        userDisconnecting = true
-        enter(.disconnected)                        // UI 立即回灰盾, 不等 stop 返回
-        DispatchQueue.global().async { _ = run("/usr/bin/sudo", [VPNCTL, "stop", ConfPath]) }
+        beginDisconnect(after: .disconnected)
+    }
+    func beginDisconnect(after successState: TunnelState) {
+        if state == .disconnecting { return }
+        enter(.disconnecting)
+        vpnQueue.async {
+            let token = self.controlToken(run("/usr/bin/sudo", [VPNCTL, "stop", ConfPath]),
+                                          ["stopped", "not-running", "stop-timeout",
+                                           "route-check-failed", "route-cleanup-failed"])
+            DispatchQueue.main.async {
+                self.connectionNetworkFingerprint = nil
+                switch token {
+                case "stopped", "not-running": self.enter(successState)
+                case "stop-timeout": self.enter(.errStop)
+                default: self.enter(.errRoute)
+                }
+            }
+        }
     }
     @objc func doSetPin() {
         let a = NSAlert(); a.messageText = "设置 \(APPNAME) PIN"; a.informativeText = "存入 macOS 钥匙串 (服务 \(service))。"

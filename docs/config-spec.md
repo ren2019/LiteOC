@@ -13,13 +13,15 @@
 | Cert Pin (SERVERCERT) | **配置,可选**(空则首次自动锁定,见 D9) |
 | Keychain Key (service/account) | **配置** |
 | openconnect 二进制路径 | **写死**(安全边界,见 ADR-0001) |
-| App 名 / vpnctl 路径 / PIDFILE / 旧迁移名 | **写死** |
+| App 名 / vpnctl 路径 / PIDFILE / 路由所有权记录 / 旧迁移名 | **写死** |
 
 > Cert Pin 的值含 `/` 和末尾 `=`(如 `pin-sha256:…==`),解析按"第一个 `=` 之后全部"取值,不截断。
 
 ## D3 — 状态 / IP 探测:自动 ✅
 - **是否连上**:`pgrep openconnect`。
 - **分到的内网 IP**:优先从 openconnect 日志(`/tmp/liteoc-openconnect.log`)的 `Configured as <ip>` 取;取不到则 `ifconfig` 按 `VPN_IP_PATTERN`(可选)兜底。
+- **退化状态**:OpenConnect 不在运行、但当前 Profile 的网关 IP 仍有指向非当前默认网关/接口的 `HOST,STATIC` 路由时,`status` 返回 `route-stale`。
+- **路由自愈**:App 启动和 `start` 前执行精确检查;`stop` 等待进程退出后验证并清理本次会话的网关主机路由。成功连接只把本次新增的网关 IP 记入 root 所有的 `/var/run/liteoc-openconnect.routes`,供异常退出恢复;不记录认证信息。只处理当前 Profile 解析出的 IPv4,不做广泛路由表清理。
 - 网段换 / 动态分配都不用改代码(主路径靠 openconnect 自身输出)。
 
 ## D4 — openconnect 路径:写死 + 安装器内置 ✅
@@ -63,7 +65,7 @@ VPN_IP_PATTERN=""                # 可选; 留空走默认宽匹配
 1. 用户在「配置…」窗口(或直接编辑 config 文件)填**非机密**参数。
 2. App 读配置 → 取 KEYCHAIN 键 → 钥匙串取 PIN;点「连接」时校验,有错 fail loudly。把配置路径传 vpnctl。
 3. vpnctl(root)用 `grep+cut` 安全解析;SERVERCERT 空则自动探测并回传(D9);用**写死的** openconnect 后台连接,输出记 `/tmp/liteoc-openconnect.log`。
-4. App 显示状态:`pgrep` 判连/断;IP 从日志 `Configured as <ip>` 取。
+4. App 显示状态:`pgrep` 判连/断;IP 从日志 `Configured as <ip>` 取;过期网关主机路由进入可见错误状态。
 
 ## 实现状态
 - ✅ D1 D2 D3 D4 D5 D6 D7(基本) D9 — 已实现并实测通过(纯 PIN 连接、TOFU 证书自动获取+回写、IP 自动显示、缺项 fail-loudly、配置窗口)。

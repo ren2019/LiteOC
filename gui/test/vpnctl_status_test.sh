@@ -23,9 +23,14 @@ pgrep_hit()  { printf '#!/bin/sh\nexit 0\n' > "$WORK/pgrep"; chmod +x "$WORK/pgr
 pgrep_miss() { printf '#!/bin/sh\nexit 1\n' > "$WORK/pgrep"; chmod +x "$WORK/pgrep"; }
 # fake ifconfig: 永远吐一个 LAN IP, 验证 status 不会拿它当 VPN IP
 printf '#!/bin/sh\necho "inet 192.168.1.17 netmask 0xffffff00"\n' > "$WORK/ifconfig"
-chmod +x "$WORK/ifconfig"
+printf '#!/bin/sh\nprintf "name: gw.example\\nip_address: 203.0.113.10\\n"\n' > "$WORK/dscacheutil"
+cat > "$WORK/route" <<'EOF'
+#!/bin/sh
+printf '   route to: 203.0.113.10\ndestination: default\n    gateway: 192.168.1.1\n  interface: en0\n      flags: <UP,GATEWAY,STATIC>\n'
+EOF
+chmod +x "$WORK/ifconfig" "$WORK/dscacheutil" "$WORK/route"
 
-run_status() { ( PATH="$WORK:$PATH" LITEOC_LOG="$LOG" sh "$VPNCTL" status "$CONF" ); }
+run_status() { ( PATH="$WORK:$PATH" LITEOC_LOG="$LOG" LITEOC_TESTING=1 sh "$VPNCTL" status "$CONF" ); }
 
 echo "== vpnctl status 契约 =="
 
