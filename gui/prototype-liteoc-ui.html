@@ -1,0 +1,1101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiteOC 菜单与设置 GUI 原型</title>
+  <!-- PROTOTYPE — Three LiteOC menu/settings variants, switchable via ?variant=A|B|C. -->
+  <style>
+    :root {
+      color-scheme: light;
+      --canvas: #e7edf1;
+      --canvas-grid: rgba(31, 43, 51, 0.045);
+      --window: rgba(249, 249, 250, 0.97);
+      --window-solid: #f7f7f8;
+      --panel: rgba(255, 255, 255, 0.9);
+      --panel-strong: #ffffff;
+      --field: #ffffff;
+      --label: #1d1d1f;
+      --secondary: #6e6e73;
+      --tertiary: #929298;
+      --separator: rgba(24, 24, 27, 0.13);
+      --separator-strong: rgba(24, 24, 27, 0.2);
+      --accent: #16834a;
+      --accent-deep: #0f5132;
+      --accent-soft: rgba(22, 131, 74, 0.11);
+      --accent-text: #0e6a3b;
+      --blue: #0a73e8;
+      --blue-soft: rgba(10, 115, 232, 0.12);
+      --danger: #d92d20;
+      --danger-soft: rgba(217, 45, 32, 0.12);
+      --warning: #c28100;
+      --warning-soft: rgba(194, 129, 0, 0.13);
+      --shadow: 0 22px 65px rgba(38, 50, 56, 0.18), 0 2px 10px rgba(38, 50, 56, 0.1);
+      --menu-shadow: 0 16px 42px rgba(38, 50, 56, 0.2), 0 2px 8px rgba(38, 50, 56, 0.12);
+      --focus: 0 0 0 3px rgba(10, 115, 232, 0.28);
+      --display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", sans-serif;
+      --text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      --mono: "SFMono-Regular", ui-monospace, Menlo, monospace;
+    }
+
+    body[data-theme="dark"] {
+      color-scheme: dark;
+      --canvas: #171a1d;
+      --canvas-grid: rgba(255, 255, 255, 0.035);
+      --window: rgba(42, 42, 44, 0.97);
+      --window-solid: #2a2a2c;
+      --panel: rgba(49, 49, 52, 0.92);
+      --panel-strong: #38383b;
+      --field: #202023;
+      --label: #f5f5f7;
+      --secondary: #b3b3b8;
+      --tertiary: #8f8f95;
+      --separator: rgba(255, 255, 255, 0.12);
+      --separator-strong: rgba(255, 255, 255, 0.19);
+      --accent: #35b56f;
+      --accent-deep: #164d33;
+      --accent-soft: rgba(53, 181, 111, 0.15);
+      --accent-text: #58d48c;
+      --blue: #3997ff;
+      --blue-soft: rgba(57, 151, 255, 0.17);
+      --danger: #ff6157;
+      --danger-soft: rgba(255, 97, 87, 0.15);
+      --warning: #f0b33b;
+      --warning-soft: rgba(240, 179, 59, 0.14);
+      --shadow: 0 28px 74px rgba(0, 0, 0, 0.42), 0 2px 12px rgba(0, 0, 0, 0.24);
+      --menu-shadow: 0 20px 50px rgba(0, 0, 0, 0.42), 0 2px 9px rgba(0, 0, 0, 0.22);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { min-height: 100%; }
+
+    body {
+      margin: 0;
+      color: var(--label);
+      background-color: var(--canvas);
+      background-image:
+        linear-gradient(var(--canvas-grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--canvas-grid) 1px, transparent 1px);
+      background-size: 28px 28px;
+      font-family: var(--text);
+      -webkit-font-smoothing: antialiased;
+      transition: background-color 160ms ease, color 160ms ease;
+    }
+
+    button, input, a { font: inherit; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, a:focus-visible { outline: none; box-shadow: var(--focus); }
+    input::placeholder { color: var(--tertiary); }
+
+    .prototype-bar {
+      position: fixed;
+      inset: 0 0 auto 0;
+      z-index: 100;
+      min-height: 66px;
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      color: #f7f7f8;
+      background: rgba(20, 23, 26, 0.94);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+      backdrop-filter: blur(20px);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.16);
+    }
+
+    .prototype-title { min-width: 230px; }
+    .prototype-eyebrow {
+      color: #7ee2aa;
+      font: 700 10px/1 var(--mono);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .prototype-title strong { display: block; margin-top: 5px; font-size: 14px; letter-spacing: -0.01em; }
+
+    .state-controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .state-label { margin-right: 3px; color: #a7abb0; font-size: 12px; }
+    .state-button, .theme-button {
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 8px;
+      padding: 6px 9px;
+      color: #d9dde1;
+      background: rgba(255, 255, 255, 0.06);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .state-button:hover, .theme-button:hover { background: rgba(255, 255, 255, 0.11); }
+    .state-button.active { color: #0b2c1d; background: #7ee2aa; border-color: #7ee2aa; font-weight: 650; }
+    .theme-button { margin-left: auto; white-space: nowrap; }
+
+    .stage {
+      min-height: 100vh;
+      padding: 108px 34px 130px;
+      display: grid;
+      place-items: center;
+    }
+
+    .review-layout {
+      width: min(1160px, 100%);
+      display: grid;
+      grid-template-columns: minmax(300px, 360px) minmax(560px, 1fr);
+      gap: 46px;
+      align-items: start;
+    }
+
+    .surface-wrap { min-width: 0; }
+    .surface-label {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      min-height: 27px;
+      margin: 0 4px 10px;
+      color: var(--secondary);
+      font-size: 12px;
+    }
+    .surface-label strong { color: var(--label); font-size: 13px; }
+    .surface-label code { color: var(--tertiary); font-family: var(--mono); font-size: 10px; }
+
+    .menu {
+      overflow: hidden;
+      color: var(--label);
+      background: var(--panel);
+      border: 1px solid var(--separator-strong);
+      box-shadow: var(--menu-shadow);
+      backdrop-filter: blur(30px) saturate(1.25);
+    }
+
+    .menu-row {
+      width: 100%;
+      min-height: 38px;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 0;
+      color: var(--label);
+      background: transparent;
+      text-align: left;
+      cursor: default;
+      text-decoration: none;
+    }
+    button.menu-row, a.menu-row { cursor: pointer; }
+    button.menu-row:hover, a.menu-row:hover { color: white; background: var(--blue); }
+    .menu-row .grow { min-width: 0; flex: 1; }
+    .menu-row .menu-title { display: block; font-size: 14px; line-height: 1.2; }
+    .menu-row .menu-subtitle { display: block; margin-top: 3px; color: var(--secondary); font-size: 11px; line-height: 1.2; }
+    .menu-row:hover .menu-subtitle { color: rgba(255, 255, 255, 0.78); }
+    .menu-row .shortcut { margin-left: auto; color: var(--tertiary); font-size: 12px; }
+    .menu-row:hover .shortcut { color: rgba(255, 255, 255, 0.75); }
+    .menu-separator { height: 1px; margin: 5px 11px; background: var(--separator); }
+    .menu-check { width: 14px; color: var(--accent-text); font-weight: 800; text-align: center; }
+    .menu-row:hover .menu-check { color: white; }
+
+    .status-dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 999px; background: currentColor; }
+    .status-dot.disconnected { width: 11px; height: 11px; border: 1.7px solid currentColor; background: transparent; color: var(--secondary); }
+    .status-dot.connecting { color: var(--warning); animation: pulse 1.25s ease-in-out infinite; }
+    .status-dot.connected { color: var(--accent); }
+    .status-dot.error { color: var(--danger); }
+
+    @keyframes pulse { 0%, 100% { opacity: .45; transform: scale(.78); } 50% { opacity: 1; transform: scale(1); } }
+
+    .window {
+      overflow: hidden;
+      color: var(--label);
+      background: var(--window);
+      border: 1px solid var(--separator-strong);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(24px) saturate(1.15);
+    }
+
+    .titlebar {
+      position: relative;
+      height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-bottom: 1px solid var(--separator);
+      background: color-mix(in srgb, var(--window-solid) 93%, transparent);
+    }
+    .traffic-lights { position: absolute; left: 16px; display: flex; gap: 8px; }
+    .traffic-lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+    .traffic-lights i:nth-child(1) { background: #ff5f57; border: 1px solid #e14840; }
+    .traffic-lights i:nth-child(2) { background: #febc2e; border: 1px solid #e1a326; }
+    .traffic-lights i:nth-child(3) { background: #28c840; border: 1px solid #20ad34; }
+    .titlebar strong { font: 650 14px/1 var(--display); letter-spacing: -0.01em; }
+
+    .app-icon {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      color: white;
+      background: #16834a;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 4px 10px rgba(15,81,50,.22);
+    }
+    .app-icon svg { width: 64%; height: 64%; }
+
+    .section-kicker {
+      color: var(--secondary);
+      font: 700 11px/1 var(--text);
+      letter-spacing: .04em;
+    }
+    .section-title { margin: 0; font: 700 20px/1.2 var(--display); letter-spacing: -0.025em; }
+    .section-copy { margin: 4px 0 0; color: var(--secondary); font-size: 12px; line-height: 1.45; }
+
+    .form-field { min-width: 0; }
+    .form-field > label { display: block; margin: 0 0 6px; color: var(--secondary); font-size: 12px; }
+    .field-row { display: flex; gap: 8px; align-items: center; }
+    .text-input {
+      width: 100%;
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--separator-strong);
+      border-radius: 7px;
+      color: var(--label);
+      background: var(--field);
+      box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.035);
+      font-size: 13px;
+    }
+    .text-input:focus { border-color: var(--blue); box-shadow: var(--focus); }
+    .text-input.mono { font-family: var(--mono); font-size: 12px; }
+    .field-hint { margin: 5px 0 0; color: var(--tertiary); font-size: 11px; line-height: 1.35; }
+
+    .button {
+      min-height: 30px;
+      padding: 0 14px;
+      border: 1px solid var(--separator-strong);
+      border-radius: 7px;
+      color: var(--label);
+      background: var(--panel-strong);
+      box-shadow: 0 1px 1px rgba(0,0,0,.04);
+      font-size: 13px;
+      font-weight: 560;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .button:hover { background: color-mix(in srgb, var(--panel-strong) 88%, var(--label)); }
+    .button.primary { color: white; background: var(--blue); border-color: var(--blue); }
+    .button.primary:hover { filter: brightness(1.05); }
+    .button.quiet { background: transparent; box-shadow: none; }
+    .button.icon-only { width: 34px; padding: 0; display: grid; place-items: center; }
+
+    .window-footer {
+      min-height: 60px;
+      padding: 13px 18px;
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      gap: 9px;
+      border-top: 1px solid var(--separator);
+      background: color-mix(in srgb, var(--window-solid) 96%, var(--label));
+    }
+
+    .closed-window {
+      min-height: 340px;
+      display: grid;
+      place-items: center;
+      border: 1px dashed var(--separator-strong);
+      border-radius: 16px;
+      color: var(--secondary);
+      background: color-mix(in srgb, var(--panel) 70%, transparent);
+      text-align: center;
+    }
+    .closed-window p { margin: 0 0 12px; font-size: 13px; }
+
+    /* Variant A — native compact */
+    .menu-a { border-radius: 13px; padding: 6px; }
+    .menu-a .menu-row { border-radius: 6px; }
+    .a-primary {
+      min-height: 52px;
+      margin-bottom: 2px;
+      padding: 0 12px;
+      color: var(--label);
+      background: var(--accent-soft);
+    }
+    .a-primary:hover { color: white; background: var(--accent) !important; }
+    .a-primary .menu-title { font-weight: 650; }
+    .a-primary .action-word { color: var(--accent-text); font-size: 12px; font-weight: 700; }
+    .a-primary:hover .action-word { color: white; }
+
+    .window-a { max-width: 640px; }
+    .a-content { padding: 22px 26px 24px; }
+    .a-intro { display: flex; align-items: center; gap: 13px; margin-bottom: 22px; }
+    .a-intro .app-icon { width: 42px; height: 42px; border-radius: 10px; }
+    .a-form-section { padding: 17px 0; border-top: 1px solid var(--separator); }
+    .a-form-section:first-of-type { border-top: 0; padding-top: 0; }
+    .a-section-grid {
+      margin-top: 13px;
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 11px 14px;
+      align-items: center;
+    }
+    .a-section-grid > label { color: var(--secondary); font-size: 12px; text-align: right; }
+    .a-security-status {
+      grid-column: 2;
+      min-height: 42px;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border-radius: 8px;
+      color: var(--accent-text);
+      background: var(--accent-soft);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .a-security-status .button { margin-left: auto; min-height: 26px; padding-inline: 10px; font-size: 11px; }
+
+    /* Variant B — branded security panel */
+    .menu-b { border-radius: 19px; padding: 9px; }
+    .b-menu-brand {
+      width: 100%;
+      min-height: 132px;
+      padding: 16px;
+      display: block;
+      border: 0;
+      border-radius: 13px;
+      color: white;
+      background: var(--accent-deep);
+      text-align: left;
+      cursor: pointer;
+    }
+    .b-menu-brand:hover { filter: brightness(1.09); }
+    .b-brand-top { display: flex; align-items: center; gap: 10px; }
+    .b-brand-top .app-icon { width: 34px; height: 34px; border-radius: 9px; box-shadow: none; }
+    .b-brand-name { display: block; font: 680 14px/1.15 var(--display); }
+    .b-brand-version { display: block; margin-top: 3px; color: rgba(255,255,255,.62); font: 10px/1 var(--mono); }
+    .b-brand-arrow { margin-left: auto; color: rgba(255,255,255,.64); font-size: 18px; }
+    .b-brand-status { margin-top: 17px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .b-brand-status strong { font: 700 21px/1 var(--display); letter-spacing: -.025em; }
+    .b-brand-status span { color: #8ff0b5; font-size: 12px; font-weight: 650; }
+    .menu-b .menu-row { border-radius: 8px; min-height: 40px; }
+    .menu-b .menu-separator { margin-block: 7px; }
+
+    .window-b { max-width: 730px; }
+    .b-window-body { min-height: 450px; display: grid; grid-template-columns: 214px minmax(0, 1fr); }
+    .b-sidebar {
+      padding: 28px 22px 22px;
+      color: white;
+      background: var(--accent-deep);
+      border-right: 1px solid rgba(0,0,0,.1);
+    }
+    .b-sidebar .app-icon { width: 54px; height: 54px; border-radius: 14px; box-shadow: none; }
+    .b-sidebar h2 { margin: 17px 0 5px; font: 720 23px/1.1 var(--display); letter-spacing: -.035em; }
+    .b-sidebar .version { color: rgba(255,255,255,.55); font: 11px/1 var(--mono); }
+    .b-sidebar-rule { height: 1px; margin: 24px 0; background: rgba(255,255,255,.15); }
+    .b-sidebar-state { display: flex; align-items: center; gap: 8px; color: rgba(255,255,255,.92); font-size: 12px; font-weight: 650; }
+    .b-sidebar-copy { margin: 10px 0 0; color: rgba(255,255,255,.62); font-size: 11px; line-height: 1.55; }
+    .b-sidebar-foot { margin-top: 105px; color: rgba(255,255,255,.45); font-size: 10px; line-height: 1.45; }
+    .b-main { background: var(--window-solid); }
+    .b-main-content { padding: 26px 28px 22px; }
+    .b-main h3 { margin: 0; font: 700 19px/1.2 var(--display); letter-spacing: -.025em; }
+    .b-main-intro { margin: 5px 0 21px; color: var(--secondary); font-size: 12px; }
+    .b-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 14px; }
+    .b-form-grid .wide { grid-column: 1 / -1; }
+    .b-security-line {
+      min-height: 58px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+      border-radius: 10px;
+      background: var(--accent-soft);
+    }
+    .b-security-symbol {
+      width: 28px; height: 28px; display: grid; place-items: center;
+      border-radius: 8px; color: white; background: var(--accent);
+      font-weight: 800;
+    }
+    .b-security-line strong { display: block; color: var(--accent-text); font-size: 12px; }
+    .b-security-line small { display: block; margin-top: 3px; color: var(--secondary); font-size: 10px; }
+    .b-security-line .button { margin-left: auto; }
+
+    /* Variant C — preference panes */
+    .menu-c { border-radius: 15px; padding: 7px; }
+    .c-primary {
+      min-height: 62px;
+      margin-bottom: 3px;
+      padding: 9px 12px;
+      border-radius: 9px;
+      border: 1px solid var(--separator);
+      background: var(--panel-strong);
+    }
+    .c-primary:hover { border-color: var(--blue); }
+    .c-primary .action-title { display: block; font: 700 15px/1.15 var(--display); }
+    .c-primary .state-copy { display: block; margin-top: 4px; color: var(--secondary); font-size: 11px; }
+    .c-primary:hover .state-copy { color: rgba(255,255,255,.78); }
+    .c-primary .arrow { margin-left: auto; color: var(--tertiary); font-size: 17px; }
+    .c-primary:hover .arrow { color: white; }
+    .menu-c .menu-row { border-radius: 7px; }
+
+    .window-c { max-width: 640px; }
+    .c-toolbar {
+      height: 78px;
+      padding: 9px 18px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--separator);
+      background: color-mix(in srgb, var(--window-solid) 96%, var(--label));
+    }
+    .c-tool {
+      width: 72px;
+      height: 59px;
+      padding: 5px;
+      border: 0;
+      border-radius: 8px;
+      color: var(--secondary);
+      background: transparent;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .c-tool:hover { background: var(--separator); }
+    .c-tool.active { color: var(--label); background: var(--panel-strong); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+    .c-tool-icon {
+      width: 26px; height: 26px; margin: 0 auto 5px;
+      display: grid; place-items: center; border-radius: 7px;
+      color: white; background: var(--blue); font-size: 14px; font-weight: 800;
+    }
+    .c-tool[data-pane="security"] .c-tool-icon { background: var(--accent); }
+    .c-pane { min-height: 330px; padding: 27px 48px 22px; }
+    .c-pane-head { margin-bottom: 23px; text-align: center; }
+    .c-pane-head h2 { margin: 0; font: 720 20px/1.2 var(--display); letter-spacing: -.025em; }
+    .c-pane-head p { margin: 6px 0 0; color: var(--secondary); font-size: 12px; }
+    .c-stack { max-width: 470px; margin: 0 auto; display: grid; gap: 15px; }
+    .c-pin-card {
+      min-height: 70px;
+      padding: 13px 14px;
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      border: 1px solid var(--separator);
+      border-radius: 10px;
+      background: var(--panel-strong);
+    }
+    .c-pin-card .app-icon { width: 34px; height: 34px; border-radius: 9px; box-shadow: none; }
+    .c-pin-card strong { display: block; font-size: 12px; }
+    .c-pin-card small { display: block; margin-top: 4px; color: var(--secondary); font-size: 10px; }
+    .c-pin-card .button { margin-left: auto; }
+
+    .about-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 130;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: rgba(10, 12, 14, 0.28);
+      backdrop-filter: blur(5px);
+    }
+    .about-panel {
+      width: min(360px, 100%);
+      padding: 34px 32px 24px;
+      border: 1px solid var(--separator-strong);
+      border-radius: 18px;
+      background: var(--window-solid);
+      box-shadow: var(--shadow);
+      text-align: center;
+    }
+    .about-panel .app-icon { width: 78px; height: 78px; margin: 0 auto 17px; border-radius: 19px; }
+    .about-panel h2 { margin: 0; font: 740 22px/1.15 var(--display); letter-spacing: -.03em; }
+    .about-version { margin-top: 6px; color: var(--secondary); font: 11px/1.4 var(--mono); }
+    .about-copy { margin: 16px 0 20px; color: var(--secondary); font-size: 12px; line-height: 1.55; }
+    .about-actions { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
+
+    .prototype-switcher {
+      position: fixed;
+      left: 50%;
+      bottom: 22px;
+      z-index: 110;
+      transform: translateX(-50%);
+      min-width: 300px;
+      height: 48px;
+      padding: 5px;
+      display: grid;
+      grid-template-columns: 40px 1fr 40px;
+      align-items: center;
+      color: white;
+      background: rgba(20, 23, 26, 0.94);
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 999px;
+      box-shadow: 0 12px 32px rgba(0,0,0,.24);
+      backdrop-filter: blur(18px);
+    }
+    .switcher-arrow {
+      width: 36px; height: 36px; border: 0; border-radius: 50%;
+      color: white; background: transparent; cursor: pointer; font-size: 20px;
+    }
+    .switcher-arrow:hover { background: rgba(255,255,255,.12); }
+    .switcher-label { text-align: center; }
+    .switcher-label strong { display: block; font-size: 12px; }
+    .switcher-label span { display: block; margin-top: 2px; color: #a7abb0; font-size: 10px; }
+
+    .state-hud {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 105;
+      width: 205px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 10px;
+      color: #cdd4d9;
+      background: rgba(20, 23, 26, 0.9);
+      box-shadow: 0 10px 26px rgba(0,0,0,.18);
+      backdrop-filter: blur(16px);
+    }
+    .state-hud summary { padding: 8px 10px; color: #7ee2aa; font: 700 10px/1 var(--mono); cursor: pointer; }
+    .state-hud pre { margin: 0; padding: 0 10px 10px; white-space: pre-wrap; font: 9px/1.5 var(--mono); }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      top: 82px;
+      z-index: 150;
+      transform: translateX(-50%);
+      padding: 9px 13px;
+      border-radius: 999px;
+      color: white;
+      background: rgba(20,23,26,.92);
+      box-shadow: 0 8px 20px rgba(0,0,0,.2);
+      font-size: 12px;
+    }
+
+    @media (max-width: 940px) {
+      .prototype-bar { position: sticky; flex-wrap: wrap; }
+      .prototype-title { min-width: 180px; }
+      .theme-button { margin-left: 0; }
+      .stage { padding-top: 42px; }
+      .review-layout { max-width: 700px; grid-template-columns: 1fr; }
+      .menu { max-width: 370px; }
+      .state-hud { display: none; }
+    }
+
+    @media (max-width: 620px) {
+      .prototype-bar { align-items: flex-start; }
+      .prototype-title { width: 100%; }
+      .stage { padding: 28px 14px 112px; }
+      .review-layout { gap: 30px; }
+      .window { border-radius: 13px; }
+      .a-content, .b-main-content, .c-pane { padding-inline: 18px; }
+      .a-section-grid { grid-template-columns: 1fr; }
+      .a-section-grid > label { text-align: left; margin-bottom: -5px; }
+      .a-security-status { grid-column: 1; }
+      .b-window-body { grid-template-columns: 1fr; }
+      .b-sidebar { display: none; }
+      .b-form-grid { grid-template-columns: 1fr; }
+      .b-form-grid .wide { grid-column: 1; }
+      .prototype-switcher { bottom: 14px; min-width: 280px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+    }
+  </style>
+</head>
+<body data-theme="light" data-variant="A">
+  <header class="prototype-bar" aria-label="原型控制台">
+    <div class="prototype-title">
+      <span class="prototype-eyebrow">Throwaway UI prototype</span>
+      <strong>LiteOC 菜单与设置窗口</strong>
+    </div>
+    <div class="state-controls" id="stateControls" aria-label="Tunnel 状态">
+      <span class="state-label">预览状态</span>
+      <button class="state-button" data-tunnel="disconnected">未连接</button>
+      <button class="state-button" data-tunnel="connecting">连接中</button>
+      <button class="state-button" data-tunnel="connected">已连接</button>
+      <button class="state-button" data-tunnel="error">错误</button>
+    </div>
+    <button class="theme-button" data-action="toggle-theme">切换深色</button>
+  </header>
+
+  <main class="stage" id="app" aria-live="polite"></main>
+  <div id="overlayRoot"></div>
+  <div id="toastRoot"></div>
+
+  <nav class="prototype-switcher" aria-label="原型版本切换">
+    <button class="switcher-arrow" data-action="previous-variant" aria-label="上一个版本">‹</button>
+    <div class="switcher-label" id="switcherLabel"></div>
+    <button class="switcher-arrow" data-action="next-variant" aria-label="下一个版本">›</button>
+  </nav>
+
+  <details class="state-hud" open>
+    <summary>PROTOTYPE STATE</summary>
+    <pre id="stateOutput"></pre>
+  </details>
+
+  <script>
+    const variants = [
+      { key: "A", name: "原生紧凑", note: "Native compact" },
+      { key: "B", name: "品牌安全面板", note: "Branded security" },
+      { key: "C", name: "系统偏好设置式", note: "Preference panes" }
+    ];
+
+    const params = new URLSearchParams(location.search);
+    const requestedVariant = (params.get("variant") || "A").toUpperCase();
+
+    const model = {
+      variant: variants.some(v => v.key === requestedVariant) ? requestedVariant : "A",
+      tunnel: "disconnected",
+      theme: "light",
+      autostart: true,
+      settingsOpen: true,
+      aboutOpen: false,
+      activePane: "connection",
+      certRevealed: false,
+      pinEditing: false,
+      pinManaged: true,
+      lastAction: "已载入原型",
+      config: {
+        host: "vpn.example.com:443",
+        user: "alex.chen",
+        group: "employees",
+        cert: "pin-sha256:exampleFingerprint==",
+        pin: ""
+      }
+    };
+
+    const feedbackURL = (() => {
+      const title = "[反馈] ";
+      const body = [
+        "## 问题或建议",
+        "",
+        "请描述你遇到的问题或希望改进的地方。",
+        "",
+        "## 环境",
+        "- LiteOC: 1.5",
+        "- macOS: 请填写",
+        "",
+        "> 请勿粘贴 PIN、证书指纹、网关地址或公司内网信息。"
+      ].join("\n");
+      return `https://github.com/ren2019/LiteOC/issues/new?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+    })();
+
+    function shieldIcon() {
+      return `
+        <svg viewBox="0 0 64 64" aria-hidden="true">
+          <path d="M32 6 52 13v15c0 13.2-8.1 23.7-20 30C20.1 51.7 12 41.2 12 28V13L32 6Z" fill="none" stroke="currentColor" stroke-width="4.2" stroke-linejoin="round"/>
+          <rect x="23" y="28" width="18" height="15" rx="3" fill="currentColor"/>
+          <path d="M27 28v-4.5a5 5 0 0 1 10 0V28" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/>
+        </svg>`;
+    }
+
+    function appIcon(sizeClass = "") {
+      return `<div class="app-icon ${sizeClass}" aria-hidden="true">${shieldIcon()}</div>`;
+    }
+
+    function statusMeta() {
+      const states = {
+        disconnected: { label: "未连接", action: "连接", actionLong: "连接 LiteOC", hint: "点击连接", className: "disconnected", ip: "" },
+        connecting: { label: "正在连接…", action: "取消", actionLong: "取消连接", hint: "点击取消", className: "connecting", ip: "" },
+        connected: { label: "已连接", action: "断开", actionLong: "断开 LiteOC", hint: "192.0.2.42", className: "connected", ip: "192.0.2.42" },
+        error: { label: "连接失败", action: "重试", actionLong: "重新连接", hint: "检查网络后重试", className: "error", ip: "" }
+      };
+      return states[model.tunnel];
+    }
+
+    function statusDot() {
+      const s = statusMeta();
+      return `<span class="status-dot ${s.className}" aria-hidden="true"></span>`;
+    }
+
+    function trafficLights() {
+      return `<div class="traffic-lights" aria-hidden="true"><i></i><i></i><i></i></div>`;
+    }
+
+    function field(name, label, options = {}) {
+      const value = model.config[name];
+      const type = options.secure && !model.certRevealed ? "password" : "text";
+      const mono = options.mono ? " mono" : "";
+      return `
+        <div class="form-field ${options.className || ""}">
+          <label for="${model.variant}-${name}">${label}</label>
+          <div class="field-row">
+            <input class="text-input${mono}" id="${model.variant}-${name}" data-field="${name}" type="${type}" value="${escapeHTML(value)}" placeholder="${options.placeholder || ""}">
+            ${options.secure ? `<button class="button icon-only" data-action="toggle-cert" aria-label="${model.certRevealed ? "隐藏" : "显示"}证书指纹">${model.certRevealed ? "隐藏" : "显示"}</button>` : ""}
+          </div>
+          ${options.hint ? `<p class="field-hint">${options.hint}</p>` : ""}
+        </div>`;
+    }
+
+    function escapeHTML(value) {
+      return String(value).replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
+    }
+
+    function pinStatusA() {
+      if (model.pinEditing) {
+        return `
+          <div class="field-row">
+            <input class="text-input" data-field="pin" type="password" value="${escapeHTML(model.config.pin)}" placeholder="输入新的 PIN">
+            <button class="button" data-action="save-pin">存入钥匙串</button>
+            <button class="button quiet" data-action="cancel-pin">取消</button>
+          </div>`;
+      }
+      return `
+        <div class="a-security-status">
+          <span aria-hidden="true">✓</span>
+          <span>PIN 已安全存储在钥匙串</span>
+          <button class="button" data-action="edit-pin">修改…</button>
+        </div>`;
+    }
+
+    function pinStatusB() {
+      if (model.pinEditing) {
+        return `
+          <div class="b-security-line wide">
+            <div class="b-security-symbol">••</div>
+            <input class="text-input" data-field="pin" type="password" value="${escapeHTML(model.config.pin)}" placeholder="输入新的 PIN">
+            <button class="button" data-action="save-pin">保存</button>
+            <button class="button quiet" data-action="cancel-pin">取消</button>
+          </div>`;
+      }
+      return `
+        <div class="b-security-line wide">
+          <div class="b-security-symbol">✓</div>
+          <div><strong>钥匙串保护已启用</strong><small>PIN 不写入 LiteOC 配置文件</small></div>
+          <button class="button" data-action="edit-pin">更新 PIN…</button>
+        </div>`;
+    }
+
+    function pinStatusC() {
+      if (model.pinEditing) {
+        return `
+          <div class="c-pin-card">
+            ${appIcon()}
+            <input class="text-input" data-field="pin" type="password" value="${escapeHTML(model.config.pin)}" placeholder="输入新的 PIN">
+            <button class="button" data-action="save-pin">保存</button>
+            <button class="button quiet" data-action="cancel-pin">取消</button>
+          </div>`;
+      }
+      return `
+        <div class="c-pin-card">
+          ${appIcon()}
+          <div><strong>PIN 已存入 macOS 钥匙串</strong><small>服务 LiteOC · 账户 pin</small></div>
+          <button class="button" data-action="edit-pin">修改…</button>
+        </div>`;
+    }
+
+    function commonMenuRows() {
+      return `
+        <button class="menu-row" data-action="open-settings"><span class="grow"><span class="menu-title">设置…</span></span><span class="shortcut">⌘,</span></button>
+        <button class="menu-row" data-action="toggle-autostart"><span class="menu-check">${model.autostart ? "✓" : ""}</span><span class="grow"><span class="menu-title">登录时自动启动</span></span></button>
+        <div class="menu-separator"></div>
+        <button class="menu-row" data-action="show-about"><span class="grow"><span class="menu-title">关于 LiteOC</span></span></button>
+        <a class="menu-row" href="https://github.com/ren2019/LiteOC" target="_blank" rel="noreferrer"><span class="grow"><span class="menu-title">访问 GitHub</span></span><span class="shortcut">↗</span></a>
+        <a class="menu-row" href="${feedbackURL}" target="_blank" rel="noreferrer"><span class="grow"><span class="menu-title">提交反馈…</span></span><span class="shortcut">↗</span></a>
+        <div class="menu-separator"></div>
+        <button class="menu-row" data-action="prototype-quit"><span class="grow"><span class="menu-title">退出 LiteOC</span></span><span class="shortcut">⌘Q</span></button>`;
+    }
+
+    function renderVariantA() {
+      const s = statusMeta();
+      const menu = `
+        <div class="surface-wrap">
+          <div class="surface-label"><strong>菜单栏菜单</strong><code>Variant A</code></div>
+          <section class="menu menu-a" aria-label="LiteOC 菜单 A">
+            <button class="menu-row a-primary" data-action="primary">
+              ${statusDot()}
+              <span class="grow"><span class="menu-title">${s.label}${s.ip ? ` · ${s.ip}` : ""}</span><span class="menu-subtitle">${s.hint}</span></span>
+              <span class="action-word">${s.action}</span>
+            </button>
+            <div class="menu-separator"></div>
+            ${commonMenuRows()}
+          </section>
+        </div>`;
+
+      const settings = model.settingsOpen ? `
+        <section class="window window-a" aria-label="LiteOC 设置 A">
+          <div class="titlebar">${trafficLights()}<strong>LiteOC 设置</strong></div>
+          <div class="a-content">
+            <div class="a-intro">
+              ${appIcon()}
+              <div><h2 class="section-title">连接设置</h2><p class="section-copy">连接参数与凭证都在这里管理。</p></div>
+            </div>
+            <section class="a-form-section">
+              <div class="section-kicker">连接</div>
+              <div class="a-section-grid">
+                <label for="A-host">VPN 网关</label><input class="text-input" id="A-host" data-field="host" value="${escapeHTML(model.config.host)}">
+                <label for="A-user">用户名</label><input class="text-input" id="A-user" data-field="user" value="${escapeHTML(model.config.user)}">
+                <label for="A-group">用户组</label><input class="text-input" id="A-group" data-field="group" value="${escapeHTML(model.config.group)}">
+              </div>
+            </section>
+            <section class="a-form-section">
+              <div class="section-kicker">安全</div>
+              <div class="a-section-grid">
+                <label for="A-cert">证书指纹</label>
+                <div>${field("cert", "", { secure: true, mono: true, hint: "首次配置可留空，连接时自动获取。" })}</div>
+                <label>PIN</label>${pinStatusA()}
+              </div>
+            </section>
+          </div>
+          <footer class="window-footer"><button class="button" data-action="close-settings">取消</button><button class="button primary" data-action="save-settings">保存更改</button></footer>
+        </section>` : closedWindow();
+
+      return reviewShell(menu, settings, "原生紧凑", "标准 macOS 信息层级，用安全状态行建立 LiteOC 识别度。");
+    }
+
+    function renderVariantB() {
+      const s = statusMeta();
+      const menu = `
+        <div class="surface-wrap">
+          <div class="surface-label"><strong>菜单栏菜单</strong><code>Variant B</code></div>
+          <section class="menu menu-b" aria-label="LiteOC 菜单 B">
+            <button class="b-menu-brand" data-action="primary">
+              <span class="b-brand-top">${appIcon()}<span><span class="b-brand-name">LiteOC</span><span class="b-brand-version">VERSION 1.5</span></span><span class="b-brand-arrow">›</span></span>
+              <span class="b-brand-status"><strong>${s.label}</strong><span>${s.action} →</span></span>
+            </button>
+            <div class="menu-separator"></div>
+            ${commonMenuRows()}
+          </section>
+        </div>`;
+
+      const settings = model.settingsOpen ? `
+        <section class="window window-b" aria-label="LiteOC 设置 B">
+          <div class="titlebar">${trafficLights()}<strong>LiteOC 设置</strong></div>
+          <div class="b-window-body">
+            <aside class="b-sidebar">
+              ${appIcon()}
+              <h2>LiteOC</h2>
+              <div class="version">VERSION 1.5</div>
+              <div class="b-sidebar-rule"></div>
+              <div class="b-sidebar-state">${statusDot()}<span>${s.label}${s.ip ? ` · ${s.ip}` : ""}</span></div>
+              <p class="b-sidebar-copy">用 macOS 钥匙串保护 PIN，仅在需要时建立企业网络连接。</p>
+              <p class="b-sidebar-foot">LiteOC 不会把 PIN 写入配置文件，也不会把连接信息发送到 GitHub。</p>
+            </aside>
+            <div class="b-main">
+              <div class="b-main-content">
+                <h3>连接与安全</h3>
+                <p class="b-main-intro">完成连接所需的全部信息，保存在这台 Mac 上。</p>
+                <div class="b-form-grid">
+                  ${field("host", "VPN 网关", { className: "wide", placeholder: "vpn.example.com:443" })}
+                  ${field("user", "用户名")}
+                  ${field("group", "用户组")}
+                  ${field("cert", "证书指纹", { className: "wide", secure: true, mono: true, hint: "首次配置可留空，连接时自动获取。" })}
+                  ${pinStatusB()}
+                </div>
+              </div>
+              <footer class="window-footer"><button class="button" data-action="close-settings">取消</button><button class="button primary" data-action="save-settings">保存更改</button></footer>
+            </div>
+          </div>
+        </section>` : closedWindow();
+
+      return reviewShell(menu, settings, "品牌安全面板", "用一条深绿安全轨道承载品牌、版本和当前状态。");
+    }
+
+    function renderVariantC() {
+      const s = statusMeta();
+      const menu = `
+        <div class="surface-wrap">
+          <div class="surface-label"><strong>菜单栏菜单</strong><code>Variant C</code></div>
+          <section class="menu menu-c" aria-label="LiteOC 菜单 C">
+            <button class="menu-row c-primary" data-action="primary">
+              ${statusDot()}
+              <span class="grow"><span class="action-title">${s.actionLong}</span><span class="state-copy">当前${s.label}${s.ip ? ` · ${s.ip}` : ""}</span></span>
+              <span class="arrow">›</span>
+            </button>
+            <div class="menu-separator"></div>
+            ${commonMenuRows()}
+          </section>
+        </div>`;
+
+      const connectionPane = `
+        <div class="c-pane">
+          <div class="c-pane-head"><h2>连接</h2><p>设置 LiteOC 要连接的 VPN 账户。</p></div>
+          <div class="c-stack">
+            ${field("host", "VPN 网关", { placeholder: "vpn.example.com:443" })}
+            ${field("user", "用户名")}
+            ${field("group", "用户组")}
+          </div>
+        </div>`;
+
+      const securityPane = `
+        <div class="c-pane">
+          <div class="c-pane-head"><h2>安全</h2><p>证书锁定与 PIN 均只保存在这台 Mac 上。</p></div>
+          <div class="c-stack">
+            ${field("cert", "证书指纹", { secure: true, mono: true, hint: "首次配置可留空，连接时自动获取。" })}
+            ${pinStatusC()}
+          </div>
+        </div>`;
+
+      const settings = model.settingsOpen ? `
+        <section class="window window-c" aria-label="LiteOC 设置 C">
+          <div class="titlebar">${trafficLights()}<strong>LiteOC 设置</strong></div>
+          <nav class="c-toolbar" aria-label="设置分类">
+            <button class="c-tool ${model.activePane === "connection" ? "active" : ""}" data-pane="connection"><span class="c-tool-icon">↗</span>连接</button>
+            <button class="c-tool ${model.activePane === "security" ? "active" : ""}" data-pane="security"><span class="c-tool-icon">✓</span>安全</button>
+          </nav>
+          ${model.activePane === "connection" ? connectionPane : securityPane}
+          <footer class="window-footer"><button class="button" data-action="close-settings">取消</button><button class="button primary" data-action="save-settings">保存更改</button></footer>
+        </section>` : closedWindow();
+
+      return reviewShell(menu, settings, "系统偏好设置式", "按任务拆分连接与安全，降低单页信息密度。");
+    }
+
+    function reviewShell(menu, settings, name, note) {
+      return `
+        <div>
+          <div class="surface-label" style="margin-bottom:18px"><strong>${model.variant} — ${name}</strong><span>${note}</span></div>
+          <div class="review-layout">
+            ${menu}
+            <div class="surface-wrap">
+              <div class="surface-label"><strong>设置窗口</strong><code>匿名示例数据</code></div>
+              ${settings}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function closedWindow() {
+      return `<div class="closed-window"><div><p>设置窗口已关闭</p><button class="button primary" data-action="open-settings">重新打开设置</button></div></div>`;
+    }
+
+    function renderAbout() {
+      if (!model.aboutOpen) return "";
+      return `
+        <div class="about-backdrop" data-action="close-about-backdrop">
+          <section class="about-panel" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+            ${appIcon()}
+            <h2 id="aboutTitle">LiteOC</h2>
+            <div class="about-version">版本 1.5</div>
+            <p class="about-copy">轻量 macOS 菜单栏 VPN 客户端。<br>PIN 只存 macOS 钥匙串。</p>
+            <div class="about-actions">
+              <a class="button" href="https://github.com/ren2019/LiteOC" target="_blank" rel="noreferrer" style="display:inline-flex;align-items:center;text-decoration:none">GitHub ↗</a>
+              <a class="button" href="${feedbackURL}" target="_blank" rel="noreferrer" style="display:inline-flex;align-items:center;text-decoration:none">提交反馈 ↗</a>
+              <button class="button primary" data-action="close-about">完成</button>
+            </div>
+          </section>
+        </div>`;
+    }
+
+    function render() {
+      document.body.dataset.theme = model.theme;
+      document.body.dataset.variant = model.variant;
+      document.querySelectorAll("[data-tunnel]").forEach(button => button.classList.toggle("active", button.dataset.tunnel === model.tunnel));
+      document.querySelector("[data-action='toggle-theme']").textContent = model.theme === "light" ? "切换深色" : "切换浅色";
+
+      const renderers = { A: renderVariantA, B: renderVariantB, C: renderVariantC };
+      document.getElementById("app").innerHTML = renderers[model.variant]();
+      document.getElementById("overlayRoot").innerHTML = renderAbout();
+
+      const variant = variants.find(v => v.key === model.variant);
+      document.getElementById("switcherLabel").innerHTML = `<strong>${variant.key} — ${variant.name}</strong><span>← → 切换方案</span>`;
+      document.getElementById("stateOutput").textContent = JSON.stringify({
+        variant: model.variant,
+        tunnel: model.tunnel,
+        theme: model.theme,
+        settingsOpen: model.settingsOpen,
+        activePane: model.variant === "C" ? model.activePane : "single-page",
+        pinManaged: model.pinManaged,
+        autostart: model.autostart,
+        lastAction: model.lastAction
+      }, null, 2);
+    }
+
+    function changeVariant(direction) {
+      const index = variants.findIndex(v => v.key === model.variant);
+      model.variant = variants[(index + direction + variants.length) % variants.length].key;
+      model.lastAction = `切换到方案 ${model.variant}`;
+      const next = new URL(location.href);
+      next.searchParams.set("variant", model.variant);
+      history.replaceState({}, "", next);
+      render();
+    }
+
+    function runPrimaryAction() {
+      if (model.tunnel === "disconnected" || model.tunnel === "error") {
+        model.tunnel = "connecting";
+        model.lastAction = "发起连接（原型不调用 vpnctl）";
+      } else if (model.tunnel === "connecting") {
+        model.tunnel = "disconnected";
+        model.lastAction = "取消连接";
+      } else {
+        model.tunnel = "disconnected";
+        model.lastAction = "断开连接";
+      }
+      render();
+    }
+
+    let toastTimer;
+    function toast(message) {
+      const root = document.getElementById("toastRoot");
+      root.innerHTML = `<div class="toast" role="status">${escapeHTML(message)}</div>`;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => root.innerHTML = "", 1800);
+    }
+
+    document.addEventListener("click", event => {
+      const pane = event.target.closest("[data-pane]");
+      if (pane) {
+        model.activePane = pane.dataset.pane;
+        model.lastAction = `打开${model.activePane === "connection" ? "连接" : "安全"}设置`;
+        render();
+        return;
+      }
+
+      const tunnel = event.target.closest("[data-tunnel]");
+      if (tunnel) {
+        model.tunnel = tunnel.dataset.tunnel;
+        model.lastAction = `预览 Tunnel 状态：${model.tunnel}`;
+        render();
+        return;
+      }
+
+      const trigger = event.target.closest("[data-action]");
+      if (!trigger) return;
+      const action = trigger.dataset.action;
+
+      if (action === "previous-variant") changeVariant(-1);
+      if (action === "next-variant") changeVariant(1);
+      if (action === "toggle-theme") { model.theme = model.theme === "light" ? "dark" : "light"; model.lastAction = `切换到${model.theme}`; render(); }
+      if (action === "primary") runPrimaryAction();
+      if (action === "toggle-autostart") { model.autostart = !model.autostart; model.lastAction = `${model.autostart ? "启用" : "关闭"}登录时自动启动`; render(); }
+      if (action === "open-settings") { model.settingsOpen = true; model.lastAction = "打开设置"; render(); }
+      if (action === "close-settings") { model.settingsOpen = false; model.lastAction = "关闭设置"; render(); }
+      if (action === "save-settings") { model.settingsOpen = false; model.lastAction = "保存设置（仅原型内存）"; render(); toast("设置已保存（原型未写入磁盘）"); }
+      if (action === "show-about") { model.aboutOpen = true; model.lastAction = "打开关于 LiteOC"; render(); }
+      if (action === "close-about") { model.aboutOpen = false; model.lastAction = "关闭关于 LiteOC"; render(); }
+      if (action === "close-about-backdrop" && event.target === trigger) { model.aboutOpen = false; render(); }
+      if (action === "toggle-cert") { model.certRevealed = !model.certRevealed; model.lastAction = `${model.certRevealed ? "显示" : "隐藏"}证书指纹`; render(); }
+      if (action === "edit-pin") { model.pinEditing = true; model.lastAction = "编辑 PIN"; render(); }
+      if (action === "cancel-pin") { model.pinEditing = false; model.config.pin = ""; model.lastAction = "取消编辑 PIN"; render(); }
+      if (action === "save-pin") {
+        if (!model.config.pin) { toast("请输入 PIN"); return; }
+        model.pinEditing = false; model.pinManaged = true; model.config.pin = ""; model.lastAction = "PIN 已存入钥匙串（模拟）"; render(); toast("PIN 已存入钥匙串（模拟）");
+      }
+      if (action === "prototype-quit") { model.lastAction = "请求退出（原型不关闭浏览器）"; render(); toast("这是原型，不会退出浏览器"); }
+    });
+
+    document.addEventListener("input", event => {
+      const fieldName = event.target.dataset.field;
+      if (!fieldName) return;
+      model.config[fieldName] = event.target.value;
+      model.lastAction = `编辑 ${fieldName}`;
+      document.getElementById("stateOutput").textContent = JSON.stringify({
+        variant: model.variant,
+        tunnel: model.tunnel,
+        theme: model.theme,
+        settingsOpen: model.settingsOpen,
+        activePane: model.variant === "C" ? model.activePane : "single-page",
+        pinManaged: model.pinManaged,
+        autostart: model.autostart,
+        lastAction: model.lastAction
+      }, null, 2);
+    });
+
+    document.addEventListener("keydown", event => {
+      const editing = event.target.matches("input, textarea, [contenteditable='true']");
+      if (!editing && event.key === "ArrowLeft") { event.preventDefault(); changeVariant(-1); }
+      if (!editing && event.key === "ArrowRight") { event.preventDefault(); changeVariant(1); }
+      if (event.key === "Escape" && model.aboutOpen) { model.aboutOpen = false; render(); }
+    });
+
+    render();
+  </script>
+</body>
+</html>
