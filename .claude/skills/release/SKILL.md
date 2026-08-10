@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Release LiteOC
 
-Treat explicit invocation as authorization for this run's release-note commit, push, annotated tag, and GitHub Release. Do not request a second confirmation.
+Treat explicit invocation as authorization for this run's release-note commit, push, annotated tag, GitHub Release, and proven released-issue comments and closures. Do not request a second confirmation.
 
 Honor any narrower instruction such as plan-only or no-execution; authorization never expands the user's requested scope. For plan-only or no-execution, do not inspect the repository: state the requested scope, render a natural-language skip as **Post-release Acceptance: skipped — REASON**, and end. For a Release Run, record Post-release Acceptance as default, naturally skipped with its reason, or explicitly expanded to a real VPN check before running commands, then carry that scope to the final report.
 
@@ -15,8 +15,9 @@ Honor any narrower instruction such as plan-only or no-execution; authorization 
 - Work only in `ren2019/LiteOC` on `main`.
 - Fetch `origin/main` and version tags. Require an empty worktree and `HEAD` equal to `origin/main`; stop with the exact mismatch otherwise.
 - Use the user's valid explicit version. If omitted, advance the latest version tag's minor component (`v1.5` → `v1.6`). Require a forward version with no existing tag or Release.
+- Resolve the issue closure set from issue numbers explicitly supplied for the release, closing references (`Closes`, `Fixes`, or `Resolves`) in released commit or pull-request metadata, and unambiguous `#N` references whose issue scope matches the release diff. Read every candidate in `ren2019/LiteOC`; treat a supplied candidate that cannot be proven as a blocking mismatch. Record proven open targets, already-closed matches, or none. Leave every pull request, title-only match, and other unproven issue unchanged.
 
-Complete this phase only when clean, synchronized main and the unused target version are proven.
+Complete this phase only when clean, synchronized main, the unused target version, and the issue closure set are proven.
 
 ## 2. Prepare
 
@@ -46,4 +47,17 @@ Follow the recorded acceptance scope. By default, download the published package
 
 Keep real VPN connection attempts out of default acceptance. If the user explicitly requests one, record the initial state, connect, verify, disconnect, and verify cleanup. For a recorded skip, omit install/launch/status and report **Post-release Acceptance: skipped** with the user's reason.
 
-Report the workflow URL, Release URL, digest comparison, installed identities, launch/status result, real-VPN scope, and every failed or skipped check.
+Complete this phase only when acceptance passes or the user's recorded skip is preserved. A failed acceptance blocks issue closure.
+
+## 5. Close released issues
+
+Run this phase only after Publish completes and Post-release Acceptance passes or is explicitly skipped.
+
+- Use the issue closure set recorded in Preflight. Keep recorded already-closed matches unchanged and report their existing state.
+- Close each proven open target with `gh issue close NUMBER -R ren2019/LiteOC --reason completed --comment ...`; the closing comment records the exact tag and Release URL plus `Post-release Acceptance: passed` or the explicit skipped reason.
+- Read back `state`, `stateReason`, and the closing comment. Require `CLOSED`, `COMPLETED`, the exact tag, and the Release URL. If closing or verification fails, report the issue and stop; the published Release remains live, but the Release Run is incomplete.
+- If no proven open target exists, report **Issue Closure: none — no proven released issue** and continue without mutation. Report an already-closed proven issue without changing its reason or labels.
+
+Complete this phase only when every proven open target is closed and verified, or the absence of a proven open target is reported explicitly.
+
+Report the workflow URL, Release URL, digest comparison, installed identities, launch/status result, real-VPN scope, issue numbers and closure URLs, and every failed or skipped check.
