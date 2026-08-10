@@ -9,7 +9,7 @@ A lightweight macOS menu-bar VPN client built around [openconnect](https://www.i
 ## Features
 
 - 🌐 **Menu-bar status**: gray when offline, color when connected, and alternating color/gray while connecting
-- 🔐 **PIN stored only in macOS Keychain** — never written to disk, configuration, source code, or Git
+- 🔐 **PIN stored only in macOS Keychain** — never added to the app configuration, source code, or Git
 - 🪟 **Graphical configuration** for gateway, user, and group; masked certificate fingerprint with reveal control; and a PIN row that opens Keychain or accepts a new PIN
 - 🔒 **Certificate TOFU**: leave the fingerprint empty to discover `pin-sha256` on first connection and save it to the configuration
 - 🎯 **Assigned VPN IP detection** from OpenConnect output rather than a hard-coded network range
