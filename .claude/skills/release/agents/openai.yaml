@@ -1,0 +1,6 @@
+interface:
+  display_name: "Release LiteOC"
+  short_description: "Publish and verify a complete LiteOC release"
+  default_prompt: "Use $release to publish and verify the next LiteOC release."
+policy:
+  allow_implicit_invocation: false

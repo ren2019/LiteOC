@@ -1,5 +1,7 @@
 # LiteOC
 
+[中文](README.md) | [English](README.en.md)
+
 轻量 macOS 菜单栏 VPN 客户端,封装 [openconnect](https://www.infradead.org/openconnect/),面向 **AnyLink** 及兼容的 AnyConnect-SSL 网关。
 
 [AnyLink](https://github.com/bjdgyc/anylink) 是国内常见的开源 SSL VPN;LiteOC 让你用菜单栏一键连/断,PIN 存 macOS 钥匙串,连接参数走可编辑配置。

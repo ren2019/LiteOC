@@ -4,7 +4,7 @@
 # 前置: gui/build/LiteOC.app (build.sh) + gui/build/oc-bundle (dylibbundler 自包含 openconnect) 已就绪
 set -eu
 DIR="$(cd "$(dirname "$0")" && pwd)"; cd "$DIR"
-VER="${LITEOC_VERSION#v}"; VER="${VER:-1.3}"
+VER="$(sh "$DIR/version.sh")"
 APP="$DIR/build/LiteOC.app"; OC="$DIR/build/oc-bundle"
 [ -d "$APP" ] || { echo "❌ 缺 $APP(先跑 ./build.sh)"; exit 1; }
 [ -d "$OC" ]  || { echo "❌ 缺 $OC(先跑 oc-bundle 构建)"; exit 1; }

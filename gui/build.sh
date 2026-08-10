@@ -3,7 +3,7 @@
 set -eu
 DIR="$(cd "$(dirname "$0")" && pwd)"; cd "$DIR"
 APPNAME="LiteOC"
-VER="${LITEOC_VERSION#v}"; VER="${VER:-1.2}"   # CI 传 tag; 本地默认 1.2
+VER="$(sh "$DIR/version.sh")"
 BINDIR="$DIR/build"; APP="$BINDIR/$APPNAME.app"
 
 echo "→ 生成 App 图标…"
