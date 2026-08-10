@@ -4,10 +4,14 @@
 # 前置: gui/build/LiteOC.app (build.sh) + gui/build/oc-bundle (dylibbundler 自包含 openconnect) 已就绪
 set -eu
 DIR="$(cd "$(dirname "$0")" && pwd)"; cd "$DIR"
-VER="${LITEOC_VERSION#v}"; VER="${VER:-1.3}"
 APP="$DIR/build/LiteOC.app"; OC="$DIR/build/oc-bundle"
 [ -d "$APP" ] || { echo "❌ 缺 $APP(先跑 ./build.sh)"; exit 1; }
 [ -d "$OC" ]  || { echo "❌ 缺 $OC(先跑 oc-bundle 构建)"; exit 1; }
+VER="${LITEOC_VERSION:-}"
+VER="${VER#v}"
+if [ -z "$VER" ]; then
+  VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 ROOT="$TMP/root"

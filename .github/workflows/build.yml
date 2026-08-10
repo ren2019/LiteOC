@@ -16,8 +16,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Test vpnctl contracts
+      - name: Test menu and vpnctl contracts
         run: |
+          sh gui/test/menu_presentation_test.sh
           sh gui/test/vpnctl_status_test.sh
           sh gui/test/vpnctl_route_test.sh
 

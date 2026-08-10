@@ -5,11 +5,12 @@
 [AnyLink](https://github.com/bjdgyc/anylink) 是国内常见的开源 SSL VPN;LiteOC 让你用菜单栏一键连/断,PIN 存 macOS 钥匙串,连接参数走可编辑配置。
 
 ## 特性
-- 🌐 **菜单栏图标**:灰=离线、彩=连上、彩灰闪烁=连接中
+- 🌐 **状态就是操作**:菜单顶部整行显示当前状态与下一步;未连接时点整行连接,连接中点整行取消,已连接时点整行断开
 - 🔐 **PIN 只存 macOS 钥匙串**——不落盘、不进配置/代码、不进 git
-- 🪟 **图形配置窗口**:网关 / 用户 / 组;**证书指纹 mask + 👁**(留空首次自动获取);**PIN 行**(已存→「打开钥匙串」按钮,未存→输入)
+- 🪟 **紧凑设置窗口**:网关 / 用户 / 组、证书指纹显隐和 PIN 钥匙串状态集中在一个原生窗口
 - 🔒 **证书 TOFU**:开通邮件不带证书指纹?留空即可,首次连接自动探测 `pin-sha256` 并回写
 - 🎯 **分到的内网 IP 自动探测**(从 openconnect 输出,不靠写死网段)
+- 💬 **帮助入口**:菜单内可查看版本、访问 GitHub,或打开已预填环境信息与隐私提醒的 GitHub Issue
 - 🛡️ **安全边界**:openconnect 路径写死、配置只解析不执行(防注入/防提权),详见 [ADR-0001](docs/adr/0001-openconnect-path-not-user-configurable.md)
 
 ## 下载与安装
@@ -25,10 +26,12 @@ cd gui && ./build.sh && sudo sh setup-root.sh
 > 仅 Apple Silicon / macOS 12+。
 
 ## 使用
-1. 启动台打开 **LiteOC**(菜单栏出现地球图标)
-2. 点 **配置…** → 填网关 / 用户 / 组(证书留空即可);**PIN 行**存一下 PIN
-3. 点 **连接** → 🟢 已连接,显示内网 IP
-4. 点 **断开** → 离线
+1. 启动台打开 **LiteOC**(菜单栏出现盾牌图标)
+2. 点 **设置…** → 填网关 / 用户 / 组(证书留空即可),再把 PIN **存入钥匙串**
+3. 点菜单顶部的 **未连接 · 点击连接** → 🟢 已连接并显示内网 IP
+4. 再点同一行即可断开;连接过程中点击则取消
+
+菜单还提供 **关于 LiteOC**、**访问 GitHub** 和 **提交反馈…**。反馈页会自动附上 LiteOC 与 macOS 版本;提交前请勿加入 PIN、证书指纹、网关地址或公司内网信息。
 
 CLI 兜底:`./connect.sh`(读同一份 `~/Library/Application Support/LiteOC/config`)。
 
@@ -61,7 +64,7 @@ CLI 兜底:`./connect.sh`(读同一份 `~/Library/Application Support/LiteOC/con
 **不支持**:OpenVPN / WireGuard / IPsec / SangFor EasyConnect 专有协议 / SSO-SAML / 客户端证书 / 非 macOS。
 
 ## 排错
-- 连接失败「用户名或密码错误」→ PIN 不对,在「配置…」的 PIN 行重新存。
-- 「证书获取失败」→ 自动探测没成功,在「配置…」证书栏手动填 `pin-sha256:…`。
+- 连接失败「PIN 有误」→ 打开 **设置…**,在 PIN 行点 **修改…** 后重新存入钥匙串。
+- 「证书获取失败」→ 自动探测没成功,在 **设置…** 的证书指纹栏手动填 `pin-sha256:…`。
 - 看实际状态:`sudo /usr/local/sbin/vpnctl status ~/Library/Application\ Support/LiteOC/config`
 - openconnect 日志:`cat /tmp/liteoc-openconnect.log` 或 `log show --predicate 'process == "openconnect"' --last 5m`

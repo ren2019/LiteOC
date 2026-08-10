@@ -81,15 +81,117 @@ func pinSet(_ service: String, _ v: String) {
     run("/usr/bin/security", ["add-generic-password", "-s", service, "-a", ACCOUNT, "-w", v, "-T", "/usr/bin/security", "-U"])
 }
 
+// ---- 菜单主状态项 ----
+final class PrimaryMenuItemView: NSView {
+    private let dot = NSTextField(labelWithString: "○")
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let subtitleLabel = NSTextField(labelWithString: "")
+    private let actionLabel = NSTextField(labelWithString: "")
+    private var presentation = menuPresentation(for: .disconnected, isConfigured: false)
+    private var tracking: NSTrackingArea?
+    private var hovered = false
+    var onActivate: (() -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+
+        dot.font = .systemFont(ofSize: 16, weight: .medium)
+        dot.alignment = .center
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        subtitleLabel.font = .systemFont(ofSize: 11)
+        actionLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        actionLabel.alignment = .right
+
+        let copy = NSStackView(views: [titleLabel, subtitleLabel])
+        copy.orientation = .vertical; copy.alignment = .leading; copy.spacing = 2
+        let row = NSStackView(views: [dot, copy, actionLabel])
+        row.orientation = .horizontal; row.alignment = .centerY; row.spacing = 10
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: 300), heightAnchor.constraint(equalToConstant: 52),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            row.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 14),
+            actionLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 34)
+        ])
+        setAccessibilityRole(.button)
+        update(presentation)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area); tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { if presentation.isEnabled { hovered = true; updateColors() } }
+    override func mouseExited(with event: NSEvent) { hovered = false; updateColors() }
+    override func mouseUp(with event: NSEvent) {
+        guard presentation.isEnabled, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        enclosingMenuItem?.menu?.cancelTracking()
+        onActivate?()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 4, dy: 3)
+        let fill: NSColor
+        if hovered && presentation.isEnabled {
+            fill = .selectedContentBackgroundColor
+        } else {
+            switch presentation.tone {
+            case .neutral, .connected: fill = NSColor.systemGreen.withAlphaComponent(0.11)
+            case .busy: fill = NSColor.systemOrange.withAlphaComponent(0.11)
+            case .error: fill = NSColor.systemRed.withAlphaComponent(0.11)
+            }
+        }
+        fill.setFill(); NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
+    }
+
+    func update(_ value: MenuPresentation) {
+        presentation = value
+        titleLabel.stringValue = value.title
+        subtitleLabel.stringValue = value.subtitle
+        actionLabel.stringValue = value.actionTitle
+        actionLabel.isHidden = value.actionTitle.isEmpty
+        setAccessibilityLabel(value.title)
+        setAccessibilityHelp(value.subtitle)
+        updateColors()
+    }
+
+    private func updateColors() {
+        if hovered && presentation.isEnabled {
+            dot.textColor = .white; titleLabel.textColor = .white
+            subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.78); actionLabel.textColor = .white
+        } else {
+            titleLabel.textColor = .labelColor; subtitleLabel.textColor = .secondaryLabelColor
+            switch presentation.tone {
+            case .neutral: dot.stringValue = "○"; dot.textColor = .secondaryLabelColor; actionLabel.textColor = .systemGreen
+            case .busy: dot.stringValue = "●"; dot.textColor = .systemOrange; actionLabel.textColor = .systemOrange
+            case .connected: dot.stringValue = "●"; dot.textColor = .systemGreen; actionLabel.textColor = .systemGreen
+            case .error: dot.stringValue = "●"; dot.textColor = .systemRed; actionLabel.textColor = .systemRed
+            }
+        }
+        needsDisplay = true
+    }
+}
+
 // ---- 配置窗口 ----
 enum PinState { case managed, empty, editing }
 
-class ConfigWindow: NSObject {
+final class ConfigWindow: NSObject {
     let win: NSWindow
     let host = NSTextField(), user = NSTextField(), group = NSTextField()
     let certSec = NSSecureTextField(), certPlain = NSTextField()
+    let certToggle = NSButton(title: "显示", target: nil, action: nil)
+    let validation = NSTextField(labelWithString: "")
+    let pinBox = NSBox()
     var certRevealed = false
-    let pinBox = NSView()
     var pinState = PinState.empty
     var pinField = NSSecureTextField()
     var service = "LiteOC"
@@ -97,115 +199,229 @@ class ConfigWindow: NSObject {
 
     init(service: String, onSaved: @escaping () -> Void) {
         self.service = service; self.onSaved = onSaved
-        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 360),
+        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 430),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
-        win.title = "LiteOC 配置"; win.isReleasedWhenClosed = false
+        win.title = "LiteOC 设置"; win.isReleasedWhenClosed = false
+        win.contentMinSize = NSSize(width: 560, height: 430)
+
         let cv = win.contentView!
-        func add(_ y: CGFloat, _ label: String, _ f: NSTextField, _ ph: String) {
-            let l = NSTextField(labelWithString: label); l.alignment = .right
-            l.frame = NSRect(x: 16, y: y, width: 96, height: 22)
-            f.placeholderString = ph; f.frame = NSRect(x: 120, y: y, width: 340, height: 22)
-            cv.addSubview(l); cv.addSubview(f)
+        func label(_ text: String) -> NSTextField {
+            let value = NSTextField(labelWithString: text)
+            value.alignment = .right; value.textColor = .secondaryLabelColor; value.font = .systemFont(ofSize: 12)
+            return value
         }
-        add(310, "网关 host:port", host, "vpn.example.com:443")
-        add(278, "用户名", user, "")
-        add(246, "用户组", group, "")
-        // 证书: secure(默认) + plain(同位置), 👁 切换
-        let certLbl = NSTextField(labelWithString: "证书指纹"); certLbl.alignment = .right
-        certLbl.frame = NSRect(x: 16, y: 214, width: 96, height: 22)
-        certSec.placeholderString = "留空 = 首次连接自动获取"; certSec.frame = NSRect(x: 120, y: 214, width: 340, height: 22)
-        certPlain.placeholderString = "pin-sha256:…"; certPlain.frame = NSRect(x: 120, y: 214, width: 340, height: 22)
+        func configureField(_ field: NSTextField, placeholder: String = "") {
+            field.placeholderString = placeholder; field.font = .systemFont(ofSize: 13)
+            field.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        }
+        func sectionTitle(_ text: String) -> NSTextField {
+            let value = NSTextField(labelWithString: text)
+            value.font = .systemFont(ofSize: 11, weight: .semibold); value.textColor = .secondaryLabelColor
+            return value
+        }
+        func separator() -> NSBox {
+            let box = NSBox(); box.boxType = .separator
+            return box
+        }
+
+        configureField(host, placeholder: "vpn.example.com:443")
+        configureField(user); configureField(group)
+        configureField(certSec, placeholder: "留空 = 首次连接自动获取")
+        configureField(certPlain, placeholder: "pin-sha256:…")
         certPlain.isHidden = true
-        let eye = NSButton(title: "👁", target: self, action: #selector(toggleCert)); eye.bezelStyle = .rounded
-        eye.frame = NSRect(x: 468, y: 213, width: 52, height: 24)
-        let certHint = NSTextField(labelWithString: "首次配置留空，自动获取")
-        certHint.font = .systemFont(ofSize: 11); certHint.textColor = .secondaryLabelColor
-        certHint.frame = NSRect(x: 120, y: 192, width: 400, height: 14)
-        cv.addSubview(certLbl); cv.addSubview(certSec); cv.addSubview(certPlain); cv.addSubview(eye); cv.addSubview(certHint)
-        // PIN 行
-        let pinLbl = NSTextField(labelWithString: "PIN"); pinLbl.alignment = .right
-        pinLbl.frame = NSRect(x: 16, y: 158, width: 96, height: 22)
-        pinBox.frame = NSRect(x: 120, y: 148, width: 400, height: 34)
-        cv.addSubview(pinLbl); cv.addSubview(pinBox)
-        // 保存 / 取消
-        let save = NSButton(title: "保存", target: self, action: #selector(doSave)); save.keyEquivalent = "\r"; save.bezelStyle = .rounded
-        save.frame = NSRect(x: 444, y: 16, width: 80, height: 32); cv.addSubview(save)
-        let canc = NSButton(title: "取消", target: self, action: #selector(doClose)); canc.bezelStyle = .rounded
-        canc.frame = NSRect(x: 360, y: 16, width: 80, height: 32); cv.addSubview(canc)
+        certToggle.target = self; certToggle.action = #selector(toggleCert); certToggle.bezelStyle = .rounded
+        certToggle.widthAnchor.constraint(equalToConstant: 54).isActive = true
+
+        let icon = NSImageView(image: NSApp.applicationIconImage)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        NSLayoutConstraint.activate([icon.widthAnchor.constraint(equalToConstant: 42), icon.heightAnchor.constraint(equalToConstant: 42)])
+        let heading = NSTextField(labelWithString: "连接设置")
+        heading.font = .systemFont(ofSize: 20, weight: .bold)
+        let intro = NSTextField(labelWithString: "连接参数与凭证都在这里管理。")
+        intro.font = .systemFont(ofSize: 12); intro.textColor = .secondaryLabelColor
+        let headerCopy = NSStackView(views: [heading, intro])
+        headerCopy.orientation = .vertical; headerCopy.alignment = .leading; headerCopy.spacing = 3
+        let header = NSStackView(views: [icon, headerCopy])
+        header.orientation = .horizontal; header.alignment = .centerY; header.spacing = 13
+
+        validation.font = .systemFont(ofSize: 11, weight: .medium)
+        validation.textColor = .systemRed; validation.isHidden = true
+
+        let connectionGrid = NSGridView(views: [
+            [label("VPN 网关"), host], [label("用户名"), user], [label("用户组"), group]
+        ])
+        connectionGrid.columnSpacing = 14; connectionGrid.rowSpacing = 10
+        connectionGrid.column(at: 0).width = 88; connectionGrid.column(at: 0).xPlacement = .trailing
+        connectionGrid.column(at: 1).width = 390; connectionGrid.column(at: 1).xPlacement = .fill
+        let connectionSection = NSStackView(views: [sectionTitle("连接"), connectionGrid])
+        connectionSection.orientation = .vertical; connectionSection.alignment = .leading; connectionSection.spacing = 10
+
+        let certFields = NSView(); certFields.translatesAutoresizingMaskIntoConstraints = false
+        [certSec, certPlain, certToggle].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; certFields.addSubview($0) }
+        NSLayoutConstraint.activate([
+            certFields.heightAnchor.constraint(equalToConstant: 32),
+            certSec.leadingAnchor.constraint(equalTo: certFields.leadingAnchor), certSec.topAnchor.constraint(equalTo: certFields.topAnchor),
+            certSec.bottomAnchor.constraint(equalTo: certFields.bottomAnchor), certSec.trailingAnchor.constraint(equalTo: certToggle.leadingAnchor, constant: -8),
+            certPlain.leadingAnchor.constraint(equalTo: certSec.leadingAnchor), certPlain.trailingAnchor.constraint(equalTo: certSec.trailingAnchor),
+            certPlain.topAnchor.constraint(equalTo: certSec.topAnchor), certPlain.bottomAnchor.constraint(equalTo: certSec.bottomAnchor),
+            certToggle.trailingAnchor.constraint(equalTo: certFields.trailingAnchor), certToggle.centerYAnchor.constraint(equalTo: certFields.centerYAnchor)
+        ])
+        let certHint = NSTextField(labelWithString: "首次配置可留空，连接时自动获取。")
+        certHint.font = .systemFont(ofSize: 11); certHint.textColor = .tertiaryLabelColor
+        let certStack = NSStackView(views: [certFields, certHint])
+        certStack.orientation = .vertical; certStack.alignment = .leading; certStack.spacing = 5
+        certStack.widthAnchor.constraint(equalToConstant: 390).isActive = true
+
+        pinBox.boxType = .custom; pinBox.borderWidth = 0; pinBox.cornerRadius = 8
+        pinBox.contentViewMargins = NSSize(width: 10, height: 6)
+        pinBox.heightAnchor.constraint(equalToConstant: 42).isActive = true
+        pinBox.widthAnchor.constraint(equalToConstant: 390).isActive = true
+
+        let securityGrid = NSGridView(views: [
+            [label("证书指纹"), certStack], [label("PIN"), pinBox]
+        ])
+        securityGrid.columnSpacing = 14; securityGrid.rowSpacing = 12
+        securityGrid.column(at: 0).width = 88; securityGrid.column(at: 0).xPlacement = .trailing
+        securityGrid.column(at: 1).width = 390; securityGrid.column(at: 1).xPlacement = .fill
+        let securitySection = NSStackView(views: [sectionTitle("安全"), securityGrid])
+        securitySection.orientation = .vertical; securitySection.alignment = .leading; securitySection.spacing = 10
+
+        let body = NSStackView(views: [header, validation, connectionSection, separator(), securitySection])
+        body.orientation = .vertical; body.alignment = .leading; body.spacing = 12
+        body.translatesAutoresizingMaskIntoConstraints = false
+        cv.addSubview(body)
+
+        let save = NSButton(title: "保存更改", target: self, action: #selector(doSave))
+        save.keyEquivalent = "\r"; save.bezelStyle = .rounded
+        let cancel = NSButton(title: "取消", target: self, action: #selector(doClose))
+        cancel.keyEquivalent = "\u{1b}"; cancel.bezelStyle = .rounded
+        let footer = NSStackView(views: [cancel, save])
+        footer.orientation = .horizontal; footer.alignment = .centerY; footer.spacing = 8
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        let footerSeparator = separator(); footerSeparator.translatesAutoresizingMaskIntoConstraints = false
+        cv.addSubview(footerSeparator); cv.addSubview(footer)
+
+        NSLayoutConstraint.activate([
+            body.topAnchor.constraint(equalTo: cv.topAnchor, constant: 22),
+            body.leadingAnchor.constraint(equalTo: cv.leadingAnchor, constant: 24),
+            body.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -24),
+            connectionSection.widthAnchor.constraint(equalTo: body.widthAnchor),
+            securitySection.widthAnchor.constraint(equalTo: body.widthAnchor),
+            footerSeparator.leadingAnchor.constraint(equalTo: cv.leadingAnchor), footerSeparator.trailingAnchor.constraint(equalTo: cv.trailingAnchor),
+            footerSeparator.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -12),
+            body.bottomAnchor.constraint(lessThanOrEqualTo: footerSeparator.topAnchor, constant: -16),
+            footer.trailingAnchor.constraint(equalTo: cv.trailingAnchor, constant: -24), footer.bottomAnchor.constraint(equalTo: cv.bottomAnchor, constant: -14),
+            save.widthAnchor.constraint(equalToConstant: 90), cancel.widthAnchor.constraint(equalToConstant: 72)
+        ])
+
         load(); rebuildPinRow()
     }
+
+    var certValue: String { certRevealed ? certPlain.stringValue : certSec.stringValue }
 
     func load() {
         let c = loadConfig()
         host.stringValue = c["HOST"] ?? ""; user.stringValue = c["USER"] ?? ""; group.stringValue = c["GROUP"] ?? ""
         let cert = c["SERVERCERT"] ?? ""
         certSec.stringValue = cert; certPlain.stringValue = cert
+        certRevealed = false; certSec.isHidden = false; certPlain.isHidden = true; certToggle.title = "显示"
+        validation.isHidden = true
+        pinState = pinGet(service) == nil ? .empty : .managed
     }
-    var certValue: String { certRevealed ? certPlain.stringValue : certSec.stringValue }
 
     @objc func toggleCert() {
         certRevealed.toggle()
-        let v = certRevealed ? certSec.stringValue : certPlain.stringValue
-        certSec.stringValue = v; certPlain.stringValue = v
+        let value = certRevealed ? certSec.stringValue : certPlain.stringValue
+        certSec.stringValue = value; certPlain.stringValue = value
         certSec.isHidden = certRevealed; certPlain.isHidden = !certRevealed
+        certToggle.title = certRevealed ? "隐藏" : "显示"
     }
 
-    func rebuildPinRow() {
-        pinBox.subviews.forEach { $0.removeFromSuperview() }
+    func rebuildPinRow(focus: Bool = false) {
+        let content = pinBox.contentView ?? pinBox
+        content.subviews.forEach { $0.removeFromSuperview() }
         let managed = pinGet(service) != nil
+        pinBox.fillColor = (managed && pinState != .editing)
+            ? NSColor.systemGreen.withAlphaComponent(0.12) : .controlBackgroundColor
+
+        let row: NSStackView
         if managed && pinState != .editing {
-            let ok = NSTextField(labelWithString: "✓ 钥匙串已管理"); ok.textColor = .systemGreen
-            ok.frame = NSRect(x: 0, y: 8, width: 140, height: 20); pinBox.addSubview(ok)
-            let open = NSButton(title: "打开钥匙串", target: self, action: #selector(openKeychain)); open.bezelStyle = .rounded
-            open.frame = NSRect(x: 140, y: 4, width: 110, height: 28); pinBox.addSubview(open)
+            let ok = NSTextField(labelWithString: "✓  PIN 已安全存储在钥匙串")
+            ok.font = .systemFont(ofSize: 12, weight: .semibold); ok.textColor = .systemGreen
             let edit = NSButton(title: "修改…", target: self, action: #selector(editPin)); edit.bezelStyle = .rounded
-            edit.frame = NSRect(x: 256, y: 4, width: 70, height: 28); pinBox.addSubview(edit)
+            row = NSStackView(views: [ok, edit])
         } else {
-            pinField = NSSecureTextField(); pinField.placeholderString = "输入 PIN"
-            pinField.frame = NSRect(x: 0, y: 6, width: 200, height: 22); pinBox.addSubview(pinField)
-            let save = NSButton(title: "保存到钥匙串", target: self, action: #selector(savePin)); save.bezelStyle = .rounded
-            save.frame = NSRect(x: 206, y: 4, width: 120, height: 28); pinBox.addSubview(save)
+            pinField = NSSecureTextField(); pinField.placeholderString = "输入 PIN"; pinField.font = .systemFont(ofSize: 13)
+            let save = NSButton(title: "存入钥匙串", target: self, action: #selector(savePin)); save.bezelStyle = .rounded
+            var views: [NSView] = [pinField, save]
             if managed {
-                let c = NSButton(title: "取消", target: self, action: #selector(cancelEditPin)); c.bezelStyle = .rounded
-                c.frame = NSRect(x: 330, y: 4, width: 60, height: 28); pinBox.addSubview(c)
+                let cancel = NSButton(title: "取消", target: self, action: #selector(cancelEditPin)); cancel.bezelStyle = .rounded
+                views.append(cancel)
             }
+            row = NSStackView(views: views)
+            pinField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
         }
+        row.orientation = .horizontal; row.alignment = .centerY; row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: content.leadingAnchor), row.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            row.centerYAnchor.constraint(equalTo: content.centerYAnchor)
+        ])
+        if focus { win.makeFirstResponder(pinField) }
     }
-    @objc func openKeychain() { run("/usr/bin/open", ["-a", "Keychain Access"]) }
-    @objc func editPin() { pinState = .editing; rebuildPinRow() }
-    @objc func cancelEditPin() { pinState = .managed; rebuildPinRow() }
+
+    func focusPin() {
+        pinState = .editing; rebuildPinRow(focus: true)
+        showValidation("连接前请先存入 PIN。")
+    }
+
+    @objc func editPin() { pinState = .editing; rebuildPinRow(focus: true) }
+    @objc func cancelEditPin() { pinState = pinGet(service) == nil ? .empty : .managed; rebuildPinRow() }
     @objc func savePin() {
-        let v = pinField.stringValue
-        guard !v.isEmpty else { return }
-        pinSet(service, v); pinState = .managed; rebuildPinRow()
+        let value = pinField.stringValue
+        guard !value.isEmpty else { showValidation("请输入 PIN 后再存入钥匙串。"); win.makeFirstResponder(pinField); return }
+        pinSet(service, value); pinField.stringValue = ""; pinState = .managed; validation.isHidden = true; rebuildPinRow()
+        onSaved?()
     }
+
+    private func showValidation(_ message: String) { validation.stringValue = message; validation.isHidden = false }
 
     @objc func doSave() {
+        let fields: [(NSTextField, String)] = [(host, "vpn.example.com:443"), (user, "your-username"), (group, "your-group")]
+        if let invalid = fields.first(where: {
+            let value = $0.0.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty || value == $0.1
+        }) {
+            showValidation("请填写 VPN 网关、用户名和用户组。")
+            win.makeFirstResponder(invalid.0); return
+        }
         var c = loadConfig()
-        c["HOST"] = host.stringValue; c["USER"] = user.stringValue
-        c["GROUP"] = group.stringValue; c["SERVERCERT"] = certValue
+        c["HOST"] = host.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        c["USER"] = user.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        c["GROUP"] = group.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        c["SERVERCERT"] = certValue.trimmingCharacters(in: .whitespacesAndNewlines)
         writeConfig(c); onSaved?(); doClose()
     }
-    @objc func doClose() { win.close() }
-    func show() {
+
+    @objc func doClose() {
+        pinField.stringValue = ""
+        pinState = pinGet(service) == nil ? .empty : .managed
+        win.close()
+    }
+    func show(focusPin: Bool = false) {
         load(); rebuildPinRow(); win.center(); win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        if focusPin { self.focusPin() }
     }
-}
-
-enum TunnelState {
-    case repairing, disconnected, connecting, disconnecting, connected
-    case errTimeout, errAuth, errCert, errDropped, errRoute, errStop, errNetworkChanged
 }
 
 struct NetworkFingerprint: Equatable { let rawValue: String }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var item: NSStatusItem!
-    var statusLine: NSMenuItem!
-    var connectItem: NSMenuItem!
-    var disconnectItem: NSMenuItem!
+    var primaryMenuView: PrimaryMenuItemView!
     var autostartItem: NSMenuItem!
     var colorImg: NSImage!
     var grayImg: NSImage!
@@ -214,6 +430,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var spinStep = 0
     var spinTimer: Timer?
     var state: TunnelState = .disconnected
+    var connectedIP = ""
     var downStreak = 0
     var timer: Timer?
     var connectStart: Date?
@@ -228,6 +445,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return i
     }
     func reloadConfig() { service = loadConfig()["KEYCHAIN_SERVICE"] ?? "LiteOC" }
+    func currentMenuPresentation() -> MenuPresentation {
+        menuPresentation(for: state, isConfigured: profileIsConfigured(loadConfig()), connectedIP: connectedIP)
+    }
+    func updatePrimaryMenu() { primaryMenuView?.update(currentMenuPresentation()) }
 
     // 连接中旋转 spinner: 预生成 12 帧 (每 30°), template 随菜单栏明暗自适应; 旋转由独立 spinTimer 驱动
     func loadSpinnerFrames() {
@@ -266,21 +487,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.imagePosition = .imageOnly; item.button?.image = grayImg
 
         let menu = NSMenu(); menu.autoenablesItems = false
-        let title = NSMenuItem(title: APPNAME, action: nil, keyEquivalent: ""); title.isEnabled = false
-        menu.addItem(title)
-        statusLine = NSMenuItem(title: "○ 未连接", action: nil, keyEquivalent: ""); statusLine.isEnabled = true
-        menu.addItem(statusLine); menu.addItem(.separator())
-        connectItem = NSMenuItem(title: "连接", action: #selector(doConnect), keyEquivalent: ""); connectItem.target = self
-        disconnectItem = NSMenuItem(title: "断开", action: #selector(doDisconnect), keyEquivalent: ""); disconnectItem.target = self
-        menu.addItem(connectItem); menu.addItem(disconnectItem); menu.addItem(.separator())
-        let setPin = NSMenuItem(title: "设置 PIN…", action: #selector(doSetPin), keyEquivalent: ""); setPin.target = self
-        let editConf = NSMenuItem(title: "配置…", action: #selector(doEditConfig), keyEquivalent: ""); editConf.target = self
-        menu.addItem(setPin); menu.addItem(editConf); menu.addItem(.separator())
-        autostartItem = NSMenuItem(title: "开机自启动", action: #selector(toggleAutostart), keyEquivalent: ""); autostartItem.target = self
+        primaryMenuView = PrimaryMenuItemView(frame: NSRect(x: 0, y: 0, width: 300, height: 52))
+        primaryMenuView.onActivate = { [weak self] in self?.performPrimaryMenuAction() }
+        let primaryItem = NSMenuItem(); primaryItem.view = primaryMenuView
+        menu.addItem(primaryItem); menu.addItem(.separator())
+
+        let settings = NSMenuItem(title: "设置…", action: #selector(doEditConfig), keyEquivalent: ",")
+        settings.target = self; menu.addItem(settings)
+        autostartItem = NSMenuItem(title: "登录时自动启动", action: #selector(toggleAutostart), keyEquivalent: ""); autostartItem.target = self
         autostartItem.state = autostartEnabled() ? .on : .off
         menu.addItem(autostartItem); menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        let about = NSMenuItem(title: "关于 LiteOC", action: #selector(showAbout), keyEquivalent: ""); about.target = self
+        let github = NSMenuItem(title: "访问 GitHub", action: #selector(openGitHub), keyEquivalent: ""); github.target = self
+        let feedback = NSMenuItem(title: "提交反馈…", action: #selector(openFeedback), keyEquivalent: ""); feedback.target = self
+        menu.addItem(about); menu.addItem(github); menu.addItem(feedback); menu.addItem(.separator())
+
+        menu.addItem(NSMenuItem(title: "退出 LiteOC", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         item.menu = menu
+        updatePrimaryMenu()
 
         repairAtLaunch()
     }
@@ -344,7 +569,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             else if let s = connectStart, Date().timeIntervalSince(s) > 30 { beginDisconnect(after: .errTimeout); return }
         case .connected:
-            if st == "connected" { statusLine.title = "● 已连接  " + ip; downStreak = 0 }
+            if st == "connected" { connectedIP = ip; updatePrimaryMenu(); downStreak = 0 }
             else if st == "route-stale" { beginDisconnect(after: .errNetworkChanged); return }
             else if st == "down" {                 // 防抖: 连续 2 次 down 才判掉线 (openconnect 内置重连瞬断不误触)
                 downStreak += 1
@@ -354,6 +579,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
              .errRoute, .errStop, .errNetworkChanged:
             break                                   // 保持当前状态,等后台操作或用户动作
         }
+        updatePrimaryMenu()
         reschedule()
     }
 
@@ -368,48 +594,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func enter(_ s: TunnelState, ip: String = "") {
         state = s; downStreak = 0
+        connectedIP = (s == .connected) ? ip : ""
         if s != .connecting { stopSpin() }
         switch s {
         case .repairing:
-            item.button?.image = grayImg; statusLine.title = "○ 正在检查残留路由…"
-            connectItem.isEnabled = false; disconnectItem.isEnabled = false
+            item.button?.image = grayImg
         case .disconnected:
             item.button?.image = grayImg
-            let h = loadConfig()["HOST"] ?? ""
-            statusLine.title = (h.isEmpty || h.hasPrefix("vpn.example")) ? "○ 未配置 — 点「配置…」" : "○ 未连接"
-            connectItem.isEnabled = true; disconnectItem.isEnabled = false
         case .connecting:
             connectStart = Date(); spinStep = 0; startSpin()
-            statusLine.title = "● 连接中…"; connectItem.isEnabled = false; disconnectItem.isEnabled = true
         case .disconnecting:
-            item.button?.image = grayImg; statusLine.title = "○ 正在断开并清理路由…"
-            connectItem.isEnabled = false; disconnectItem.isEnabled = false
+            item.button?.image = grayImg
         case .connected:
             guard let current = runNetwork() else { beginDisconnect(after: .errNetworkChanged); return }
             connectionNetworkFingerprint = current
-            item.button?.image = colorImg; statusLine.title = "● 已连接  " + ip
-            connectItem.isEnabled = false; disconnectItem.isEnabled = true
-        case .errTimeout: showError("连接超时", "检查网络/网关可达性")
-        case .errAuth: showError("PIN 有误", "检查 PIN")
-        case .errCert: showError("证书获取失败", "「配置…」手动填 pin-sha256")
-        case .errDropped: showError("连接已断开", "点「连接」重试")
-        case .errRoute: showError("路由检查/清理失败", "请重试断开或连接")
-        case .errStop: showError("断开未完成", "OpenConnect 未按时退出")
-        case .errNetworkChanged:
-            showError("网络已变化", "请重新连接")
-            disconnectItem.isEnabled = false
+            item.button?.image = colorImg
+        case .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged:
+            item.button?.image = redImg
         }
+        updatePrimaryMenu()
         reschedule()
     }
-    func showError(_ t: String, _ d: String) {
-        item.button?.image = redImg; statusLine.title = "● \(t) — \(d)"
-        connectItem.isEnabled = true; disconnectItem.isEnabled = true
+
+    func performPrimaryMenuAction() {
+        switch currentMenuPresentation().action {
+        case .none: break
+        case .connect: doConnect()
+        case .disconnect: doDisconnect()
+        case .openSettings: showConfig(focusPin: state == .errAuth)
+        }
     }
 
     @objc func doConnect() {
         reloadConfig()
         if case .connecting = state { return }      // 已在连接, 忽略重复点击
-        guard let pin = pinGet(service) else { alert("未设置 PIN", "请先在「配置…」里存 PIN。"); return }
+        guard profileIsConfigured(loadConfig()) else { enter(.disconnected); showConfig(); return }
+        guard let pin = pinGet(service) else { enter(.disconnected); showConfig(focusPin: true); return }
         guard let current = runNetwork() else { enter(.errRoute); return }
         connectionNetworkFingerprint = current
         enter(.connecting)
@@ -455,16 +675,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
-    @objc func doSetPin() {
-        let a = NSAlert(); a.messageText = "设置 \(APPNAME) PIN"; a.informativeText = "存入 macOS 钥匙串 (服务 \(service))。"
-        a.addButton(withTitle: "保存"); a.addButton(withTitle: "取消")
-        let f = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24)); f.placeholderString = "PIN 码"
-        a.accessoryView = f; a.window.initialFirstResponder = f
-        if a.runModal() == .alertFirstButtonReturn, !f.stringValue.isEmpty { pinSet(service, f.stringValue); tick() }
-    }
     @objc func doEditConfig() {
-        if configWin == nil { configWin = ConfigWindow(service: service) { self.reloadConfig(); self.tick() } }
-        configWin?.service = service; configWin?.show()
+        showConfig()
+    }
+    func showConfig(focusPin: Bool = false) {
+        if configWin == nil {
+            configWin = ConfigWindow(service: service) { [weak self] in
+                self?.reloadConfig(); self?.updatePrimaryMenu()
+            }
+        }
+        configWin?.service = service; configWin?.show(focusPin: focusPin)
+    }
+
+    @objc func showAbout() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.orderFrontStandardAboutPanel(nil)
+    }
+    @objc func openGitHub() {
+        if let url = URL(string: "https://github.com/ren2019/LiteOC") { NSWorkspace.shared.open(url) }
+    }
+    @objc func openFeedback() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+        let os = ProcessInfo.processInfo.operatingSystemVersionString
+        let body = """
+        ## 问题或建议
+
+        请描述你遇到的问题或希望改进的地方。
+
+        ## 环境
+        - LiteOC: \(version)
+        - macOS: \(os)
+
+        > 请勿粘贴 PIN、证书指纹、网关地址或公司内网信息。
+        """
+        var components = URLComponents(string: "https://github.com/ren2019/LiteOC/issues/new")!
+        components.queryItems = [URLQueryItem(name: "title", value: "[反馈] "), URLQueryItem(name: "body", value: body)]
+        if let url = components.url { NSWorkspace.shared.open(url) }
     }
     func alert(_ t: String, _ m: String) { let a = NSAlert(); a.messageText = t; a.informativeText = m; a.addButton(withTitle: "好"); a.runModal() }
 
@@ -473,7 +719,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
     @objc func toggleAutostart() {
-        guard #available(macOS 13.0, *) else { alert("不支持", "开机自启动需 macOS 13 及以上。"); return }
+        guard #available(macOS 13.0, *) else { alert("不支持", "登录时自动启动需 macOS 13 及以上。"); return }
         do {
             if SMAppService.mainApp.status == .enabled { try SMAppService.mainApp.unregister() }
             else { try SMAppService.mainApp.register() }
