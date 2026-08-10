@@ -6,8 +6,20 @@ APPNAME="LiteOC"
 VER="$(sh "$DIR/version.sh")"
 BINDIR="$DIR/build"; APP="$BINDIR/$APPNAME.app"
 
+# 可用环境变量覆盖 SDK；默认沿用当前 Xcode/Command Line Tools 的匹配 SDK。
+SWIFT_SDK="${LITEOC_SWIFT_SDK:-}"
+SWIFT_CACHE="${TMPDIR:-/tmp}/liteoc-swift-module-cache"
+mkdir -p "$SWIFT_CACHE"
+export CLANG_MODULE_CACHE_PATH="$SWIFT_CACHE" SWIFT_MODULE_CACHE_PATH="$SWIFT_CACHE"
+run_swift() {
+  if [ -n "$SWIFT_SDK" ]; then swift -sdk "$SWIFT_SDK" -target arm64-apple-macosx12.0 "$@"; else swift -target arm64-apple-macosx12.0 "$@"; fi
+}
+run_swiftc() {
+  if [ -n "$SWIFT_SDK" ]; then swiftc -sdk "$SWIFT_SDK" -target arm64-apple-macosx12.0 "$@"; else swiftc -target arm64-apple-macosx12.0 "$@"; fi
+}
+
 echo "→ 生成 App 图标…"
-swift make_icon.swift
+run_swift make_icon.swift
 mkdir -p AppIcon.iconset
 sips -z 16 16   icon_1024.png --out AppIcon.iconset/icon_16x16.png      >/dev/null
 sips -z 32 32   icon_1024.png --out AppIcon.iconset/icon_16x16@2x.png   >/dev/null
@@ -19,14 +31,17 @@ sips -z 256 256 icon_1024.png --out AppIcon.iconset/icon_256x256.png    >/dev/nu
 sips -z 512 512 icon_1024.png --out AppIcon.iconset/icon_256x256@2x.png  >/dev/null
 sips -z 512 512 icon_1024.png --out AppIcon.iconset/icon_512x512.png    >/dev/null
 cp icon_1024.png AppIcon.iconset/icon_512x512@2x.png
-iconutil -c icns AppIcon.iconset -o AppIcon.icns
+if ! iconutil -c icns AppIcon.iconset -o AppIcon.icns; then
+  echo "  iconutil 无法打包,改用 Swift ICNS 兼容路径…"
+  run_swift make_icns.swift
+fi
 
 echo "→ 生成菜单栏图标 (彩色/灰色)…"
-swift make_menubar.swift
+run_swift make_menubar.swift
 
 echo "→ 编译 Swift…"
 mkdir -p "$BINDIR"
-swiftc main.swift -o "$BINDIR/$APPNAME" -framework Cocoa -framework ServiceManagement
+run_swiftc main.swift MenuPresentation.swift -o "$BINDIR/$APPNAME" -framework Cocoa -framework ServiceManagement
 
 echo "→ 打包 .app …"
 rm -rf "$APP"
@@ -48,6 +63,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundleExecutable</key><string>$APPNAME</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VER</string>
+  <key>CFBundleVersion</key><string>$VER</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleIconName</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>

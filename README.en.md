@@ -8,11 +8,12 @@ A lightweight macOS menu-bar VPN client built around [openconnect](https://www.i
 
 ## Features
 
-- 🌐 **Menu-bar status**: gray when offline, color when connected, and alternating color/gray while connecting
+- 🌐 **Status is the action**: the top menu row shows the current state and next step; click it to connect when offline, cancel while connecting, or disconnect when connected
 - 🔐 **PIN stored only in macOS Keychain** — never added to the app configuration, source code, or Git
-- 🪟 **Graphical configuration** for gateway, user, and group; masked certificate fingerprint with reveal control; and a PIN row that opens Keychain or accepts a new PIN
+- 🪟 **Compact Settings window** for gateway, user, and group; certificate fingerprint reveal control; and Keychain PIN status
 - 🔒 **Certificate TOFU**: leave the fingerprint empty to discover `pin-sha256` on first connection and save it to the configuration
 - 🎯 **Assigned VPN IP detection** from OpenConnect output rather than a hard-coded network range
+- 💬 **Help entry points**: view the version, visit GitHub, or open a prefilled feedback issue with a privacy reminder
 - 🛡️ **Security boundary**: the OpenConnect path is fixed and configuration is parsed rather than executed. See [ADR-0001](docs/adr/0001-openconnect-path-not-user-configurable.md).
 
 ## Download and install
@@ -31,10 +32,12 @@ Apple Silicon and macOS 12 or later are required.
 
 ## Use
 
-1. Open **LiteOC** from Launchpad; a globe icon appears in the menu bar.
-2. Choose **Configure…**, enter the gateway, user, and group, leave the certificate empty if desired, and save the PIN.
-3. Choose **Connect**. The connected state displays the assigned VPN IP.
-4. Choose **Disconnect** to stop the connection.
+1. Open **LiteOC** from Launchpad; a shield icon appears in the menu bar.
+2. Choose **Settings…**, enter the gateway, user, and group, leave the certificate empty if desired, and **Save to Keychain**.
+3. Click the top **Disconnected · Click to Connect** row. The connected state displays the assigned VPN IP.
+4. Click the same row to disconnect; clicking it while connecting cancels the attempt.
+
+The menu also provides **About LiteOC**, **Visit GitHub**, and **Submit Feedback…**. The feedback page includes the LiteOC and macOS versions; before submitting, do not add a PIN, certificate fingerprint, gateway address, or company network information.
 
 For a CLI fallback, run `./connect.sh`; it reads the same configuration from `~/Library/Application Support/LiteOC/config`.
 
@@ -72,7 +75,7 @@ Choose **LiteOC** for macOS, an AnyLink/PIN-only gateway, menu-bar connect/disco
 
 ## Troubleshooting
 
-- “Incorrect username or password” → save the correct PIN again in **Configure…**.
-- “Certificate discovery failed” → enter a `pin-sha256:…` value manually in the certificate field.
+- “Incorrect username or password” → open **Settings…**, click **Modify…** on the PIN row, and save the correct PIN to Keychain.
+- “Certificate discovery failed” → enter a `pin-sha256:…` value manually in the certificate fingerprint field in **Settings…**.
 - Check actual status: `sudo /usr/local/sbin/vpnctl status ~/Library/Application\ Support/LiteOC/config`
 - Read OpenConnect logs: `cat /tmp/liteoc-openconnect.log` or `log show --predicate 'process == "openconnect"' --last 5m`

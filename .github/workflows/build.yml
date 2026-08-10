@@ -27,8 +27,9 @@ jobs:
           sh scripts/release-gate.sh notes "$GITHUB_REF_NAME" "$previous_tag" RELEASE_NOTES.md
           sh scripts/release-gate.sh ancestry "$GITHUB_SHA" origin/main
 
-      - name: Test vpnctl contracts
+      - name: Test menu and vpnctl contracts
         run: |
+          sh gui/test/menu_presentation_test.sh
           sh gui/test/vpnctl_status_test.sh
           sh gui/test/vpnctl_route_test.sh
           sh gui/test/release_gate_test.sh
