@@ -38,7 +38,7 @@ check_notes() {
   [ -f "$notes" ] || die "release notes not found: $notes"
   version_is_greater "${tag#v}" "${previous_tag#v}" || die "$tag must be newer than $previous_tag"
 
-  awk -v tag="$tag" -v previous_tag="$previous_tag" '
+  LC_ALL=C awk -v tag="$tag" -v previous_tag="$previous_tag" '
     function problem(message) {
       print "release-gate: " message > "/dev/stderr"
       failed = 1

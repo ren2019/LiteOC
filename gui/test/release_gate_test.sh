@@ -79,6 +79,7 @@ echo "== Release Gate 契约 =="
 NOTES="$WORK/RELEASE_NOTES.md"
 write_valid_notes "$NOTES" v1.6 v1.5
 check_ok "完整双语发布说明通过 gate" sh "$GATE" notes v1.6 v1.5 "$NOTES"
+check_ok "UTF-8 locale 下中文标题保持可区分" env LC_ALL=en_US.UTF-8 sh "$GATE" notes v1.6 v1.5 "$NOTES"
 check_fails "缺少发布说明文件时拒绝发布" sh "$GATE" notes v1.6 v1.5 "$WORK/missing.md"
 
 sed 's/# LiteOC v1.6/# LiteOC v1.7/' "$NOTES" >"$WORK/wrong-version.md"
