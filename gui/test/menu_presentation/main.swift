@@ -31,16 +31,19 @@ check("unconfigured opens settings",
       expected("未配置", "完成设置后即可连接", "设置", .openSettings, .neutral))
 check("Disconnected connects",
       menuPresentation(for: .disconnected, isConfigured: true),
-      expected("未连接", "点击连接", "连接", .connect, .neutral))
+      expected("未连接", "", "连接", .connect, .neutral))
 check("Connecting cancels",
       menuPresentation(for: .connecting, isConfigured: true),
-      expected("正在连接…", "点击取消", "取消", .disconnect, .busy))
+      expected("正在连接…", "", "取消", .disconnect, .busy))
 check("Disconnecting is disabled",
       menuPresentation(for: .disconnecting, isConfigured: true),
       expected("正在断开…", "正在清理路由", "", .none, .busy))
 check("Connected displays the VPN IP and disconnects",
-      menuPresentation(for: .connected, isConfigured: true, connectedIP: "192.0.2.42"),
-      expected("已连接 · 192.0.2.42", "点击断开", "断开", .disconnect, .connected))
+      menuPresentation(for: .connected, isConfigured: true, connectedIP: "198.51.100.146"),
+      expected("已连接", "198.51.100.146", "断开", .disconnect, .connected))
+check("Connected without an IP keeps the detail line empty",
+      menuPresentation(for: .connected, isConfigured: true),
+      expected("已连接", "", "断开", .disconnect, .connected))
 check("auth error opens settings",
       menuPresentation(for: .errAuth, isConfigured: true),
       expected("PIN 有误", "修改 PIN 后重试", "设置", .openSettings, .error))
@@ -49,19 +52,41 @@ check("certificate error opens settings",
       expected("证书获取失败", "检查证书指纹", "设置", .openSettings, .error))
 check("timeout retries",
       menuPresentation(for: .errTimeout, isConfigured: true),
-      expected("连接超时", "检查网络后重试", "重试", .connect, .error))
+      expected("连接超时", "检查网络", "重试", .connect, .error))
 check("drop retries",
       menuPresentation(for: .errDropped, isConfigured: true),
-      expected("连接已断开", "点击重试", "重试", .connect, .error))
+      expected("连接已断开", "", "重试", .connect, .error))
 check("network change retries",
       menuPresentation(for: .errNetworkChanged, isConfigured: true),
-      expected("网络已变化", "点击重新连接", "重试", .connect, .error))
+      expected("网络已变化", "", "重试", .connect, .error))
 check("route error retries cleanup",
       menuPresentation(for: .errRoute, isConfigured: true),
-      expected("路由清理失败", "点击重试清理", "清理", .disconnect, .error))
+      expected("路由清理失败", "", "清理", .disconnect, .error))
 check("stop error retries cleanup",
       menuPresentation(for: .errStop, isConfigured: true),
-      expected("断开未完成", "点击重试清理", "清理", .disconnect, .error))
+      expected("断开未完成", "", "清理", .disconnect, .error))
+
+let presentations = [
+    TunnelState.repairing, .disconnected, .connecting, .disconnecting, .connected,
+    .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged
+].map {
+    menuPresentation(for: $0, isConfigured: true, connectedIP: "198.51.100.146")
+}
+guard presentations.allSatisfy({ !$0.subtitle.contains("点击") }) else {
+    fputs("FAIL primary menu subtitles must not repeat click instructions\n", stderr)
+    exit(1)
+}
+passed += 1
+print("  ok   subtitles do not repeat click instructions")
+
+guard PrimaryMenuLayout.width == 272,
+      PrimaryMenuLayout.height == 46,
+      PrimaryMenuLayout.actionWidth == 40 else {
+    fputs("FAIL compact primary menu layout constants\n", stderr)
+    exit(1)
+}
+passed += 1
+print("  ok   compact primary menu layout constants")
 
 let configured = ["HOST": "vpn.example.net:443", "USER": "alex", "GROUP": "employees"]
 let placeholderHost = ["HOST": "vpn.example.com:443", "USER": "alex", "GROUP": "employees"]

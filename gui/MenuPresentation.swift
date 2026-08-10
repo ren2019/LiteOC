@@ -13,6 +13,15 @@ enum MenuTone: Equatable {
     case neutral, busy, connected, error
 }
 
+enum PrimaryMenuLayout {
+    static let width: CGFloat = 272
+    static let height: CGFloat = 46
+    static let horizontalInset: CGFloat = 10
+    static let statusWidth: CGFloat = 14
+    static let actionWidth: CGFloat = 40
+    static let spacing: CGFloat = 8
+}
+
 struct MenuPresentation: Equatable {
     let title: String
     let subtitle: String
@@ -52,12 +61,12 @@ func menuPresentation(
         )
     case .disconnected:
         return MenuPresentation(
-            title: "未连接", subtitle: "点击连接", actionTitle: "连接",
+            title: "未连接", subtitle: "", actionTitle: "连接",
             action: .connect, tone: .neutral
         )
     case .connecting:
         return MenuPresentation(
-            title: "正在连接…", subtitle: "点击取消", actionTitle: "取消",
+            title: "正在连接…", subtitle: "", actionTitle: "取消",
             action: .disconnect, tone: .busy
         )
     case .disconnecting:
@@ -66,9 +75,8 @@ func menuPresentation(
             action: .none, tone: .busy
         )
     case .connected:
-        let title = connectedIP.isEmpty ? "已连接" : "已连接 · \(connectedIP)"
         return MenuPresentation(
-            title: title, subtitle: "点击断开", actionTitle: "断开",
+            title: "已连接", subtitle: connectedIP, actionTitle: "断开",
             action: .disconnect, tone: .connected
         )
     case .errAuth:
@@ -83,27 +91,27 @@ func menuPresentation(
         )
     case .errTimeout:
         return MenuPresentation(
-            title: "连接超时", subtitle: "检查网络后重试", actionTitle: "重试",
+            title: "连接超时", subtitle: "检查网络", actionTitle: "重试",
             action: .connect, tone: .error
         )
     case .errDropped:
         return MenuPresentation(
-            title: "连接已断开", subtitle: "点击重试", actionTitle: "重试",
+            title: "连接已断开", subtitle: "", actionTitle: "重试",
             action: .connect, tone: .error
         )
     case .errNetworkChanged:
         return MenuPresentation(
-            title: "网络已变化", subtitle: "点击重新连接", actionTitle: "重试",
+            title: "网络已变化", subtitle: "", actionTitle: "重试",
             action: .connect, tone: .error
         )
     case .errRoute:
         return MenuPresentation(
-            title: "路由清理失败", subtitle: "点击重试清理", actionTitle: "清理",
+            title: "路由清理失败", subtitle: "", actionTitle: "清理",
             action: .disconnect, tone: .error
         )
     case .errStop:
         return MenuPresentation(
-            title: "断开未完成", subtitle: "点击重试清理", actionTitle: "清理",
+            title: "断开未完成", subtitle: "", actionTitle: "清理",
             action: .disconnect, tone: .error
         )
     }

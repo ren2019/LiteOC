@@ -101,21 +101,31 @@ final class PrimaryMenuItemView: NSView {
         subtitleLabel.font = .systemFont(ofSize: 11)
         actionLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         actionLabel.alignment = .right
+        titleLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        actionLabel.setContentHuggingPriority(.required, for: .horizontal)
+        actionLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let copy = NSStackView(views: [titleLabel, subtitleLabel])
         copy.orientation = .vertical; copy.alignment = .leading; copy.spacing = 2
+        copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        copy.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let row = NSStackView(views: [dot, copy, actionLabel])
-        row.orientation = .horizontal; row.alignment = .centerY; row.spacing = 10
+        row.orientation = .horizontal; row.alignment = .centerY; row.distribution = .fill
+        row.spacing = PrimaryMenuLayout.spacing
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 300), heightAnchor.constraint(equalToConstant: 52),
-            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            widthAnchor.constraint(equalToConstant: PrimaryMenuLayout.width),
+            heightAnchor.constraint(equalToConstant: PrimaryMenuLayout.height),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PrimaryMenuLayout.horizontalInset),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PrimaryMenuLayout.horizontalInset),
             row.centerYAnchor.constraint(equalTo: centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: 14),
-            actionLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 34)
+            dot.widthAnchor.constraint(equalToConstant: PrimaryMenuLayout.statusWidth),
+            actionLabel.widthAnchor.constraint(equalToConstant: PrimaryMenuLayout.actionWidth)
         ])
         setAccessibilityRole(.button)
         update(presentation)
@@ -157,8 +167,8 @@ final class PrimaryMenuItemView: NSView {
         presentation = value
         titleLabel.stringValue = value.title
         subtitleLabel.stringValue = value.subtitle
+        subtitleLabel.isHidden = value.subtitle.isEmpty
         actionLabel.stringValue = value.actionTitle
-        actionLabel.isHidden = value.actionTitle.isEmpty
         setAccessibilityLabel(value.title)
         setAccessibilityHelp(value.subtitle)
         updateColors()
@@ -487,7 +497,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         item.button?.imagePosition = .imageOnly; item.button?.image = grayImg
 
         let menu = NSMenu(); menu.autoenablesItems = false
-        primaryMenuView = PrimaryMenuItemView(frame: NSRect(x: 0, y: 0, width: 300, height: 52))
+        primaryMenuView = PrimaryMenuItemView(
+            frame: NSRect(x: 0, y: 0, width: PrimaryMenuLayout.width, height: PrimaryMenuLayout.height)
+        )
         primaryMenuView.onActivate = { [weak self] in self?.performPrimaryMenuAction() }
         let primaryItem = NSMenuItem(); primaryItem.view = primaryMenuView
         menu.addItem(primaryItem); menu.addItem(.separator())

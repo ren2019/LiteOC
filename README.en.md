@@ -34,7 +34,7 @@ Apple Silicon and macOS 12 or later are required.
 
 1. Open **LiteOC** from Launchpad; a shield icon appears in the menu bar.
 2. Choose **Settings…**, enter the gateway, user, and group, leave the certificate empty if desired, and **Save to Keychain**.
-3. Click the top **Disconnected · Click to Connect** row. The connected state displays the assigned VPN IP.
+3. Click the top **Disconnected** status row, whose trailing action reads **Connect**. Once connected, the assigned VPN IP appears on the second line.
 4. Click the same row to disconnect; clicking it while connecting cancels the attempt.
 
 The menu also provides **About LiteOC**, **Visit GitHub**, and **Submit Feedback…**. The feedback page includes the LiteOC and macOS versions; before submitting, do not add a PIN, certificate fingerprint, gateway address, or company network information.
