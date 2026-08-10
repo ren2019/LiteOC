@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Treat explicit invocation as authorization for this run's release-note commit, push, annotated tag, and GitHub Release. Do not request a second confirmation.
 
-Honor any narrower instruction such as plan-only or no-execution; authorization never expands the user's requested scope. For plan-only or no-execution, do not inspect the repository: state the requested scope, render a natural-language skip as **Post-release Acceptance: skipped — REASON**, and end. For an execution run, record Post-release Acceptance as default, naturally skipped with its reason, or explicitly expanded to a real VPN check before running commands, then carry that scope to the final report.
+Honor any narrower instruction such as plan-only or no-execution; authorization never expands the user's requested scope. For plan-only or no-execution, do not inspect the repository: state the requested scope, render a natural-language skip as **Post-release Acceptance: skipped — REASON**, and end. For a Release Run, record Post-release Acceptance as default, naturally skipped with its reason, or explicitly expanded to a real VPN check before running commands, then carry that scope to the final report.
 
 ## 1. Preflight
 
