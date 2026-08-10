@@ -1,37 +1,37 @@
-# LiteOC v1.5
+# LiteOC v1.6
 
 ## 中文
 
-LiteOC v1.5 修复了网络切换或 OpenConnect 异常退出后遗留 VPN 网关路由的问题，并让连接生命周期的退化状态可见、可恢复。
+LiteOC v1.6 重新设计了菜单与设置体验，让当前状态、下一步操作和求助入口更直接，同时为发布产物增加了完整的一致性校验。
 
 ### 用户可感知变化
 
-- 启动、重新连接和应用恢复时，会精确识别并修复当前 VPN 网关的过期主机路由，不影响其他静态路由。
-- 断开连接会等待 OpenConnect 退出并验证路由清理；超时或清理失败会显示明确错误，不再提前报告“未连接”。
-- 网络变化会停止旧连接并完成清理，同时更新了应用与菜单栏图标，补充了网络代理排错文档。
+- 菜单顶部现在把状态与操作合并为一行：未连接时点击连接、连接中点击取消、已连接时点击断开，并在异常状态下给出对应的恢复动作。
+- 新的紧凑设置窗口集中管理网关、用户、组、证书指纹和 PIN 钥匙串状态，修改 PIN 与证书信息更清晰。
+- 菜单新增关于 LiteOC、访问 GitHub 和提交反馈入口；反馈页会预填 LiteOC 与 macOS 版本，并提醒避免提交敏感网络信息。
+- 发布流程现在强制校验双语说明、main 分支来源，以及 App、安装包和下载文件的版本一致性。
 
 ### 验证
 
-- 46 项 vpnctl 状态与路由契约断言通过，Swift 应用编译通过。
-- 已安装 v1.5 包并核验 App、安装回执、helper 与自包含 OpenConnect；过期路由修复返回 `route-clean`。
-- VPN 网关及共享同一公网 IP 的三个入口现场访问均恢复为 HTTP 200。
+- 86 项菜单、vpnctl、Release Gate 与双端 Release Skill 契约检查通过，Swift 类型检查通过。
+- LiteOC.app、自包含 OpenConnect 与 PKG 完整构建通过，main CI 与产物身份检查通过。
 
 ## English
 
-LiteOC v1.5 fixes stale VPN gateway routes left after network changes or abnormal OpenConnect exits, while making degraded connection states visible and recoverable.
+LiteOC v1.6 redesigns the menu and Settings experience so the current state, next action, and help entry points are easier to understand, while adding end-to-end consistency checks for release artifacts.
 
 ### User-visible changes
 
-- Startup, reconnection, and app recovery now identify and repair only the stale host route for the configured VPN gateway, leaving unrelated static routes untouched.
-- Disconnect now waits for OpenConnect to exit and verifies route cleanup; timeout or cleanup failures surface a clear error instead of reporting a healthy disconnected state early.
-- Network changes stop and clean up the old connection, while refreshed app/menu-bar icons and new proxy troubleshooting guidance improve day-to-day operation.
+- The top menu row now combines status and action: click to connect while offline, cancel while connecting, or disconnect when connected, with a matching recovery action for each error state.
+- A compact Settings window now brings the gateway, user, group, certificate fingerprint, and Keychain PIN status together, making PIN and certificate updates clearer.
+- New About LiteOC, Visit GitHub, and Submit Feedback entries provide version information and a prefilled issue form with a reminder not to share sensitive network details.
+- The release pipeline now enforces bilingual notes, main-branch ancestry, and matching versions across the App, installer package, and downloadable asset.
 
 ### Verification
 
-- Passed 46 vpnctl status and route contract assertions, plus Swift application compilation.
-- Installed the v1.5 package and verified the App, installation receipt, helper, bundled OpenConnect, and a `route-clean` recovery result.
-- Confirmed HTTP 200 access to the VPN gateway and all three affected endpoints sharing the same public IP.
+- Passed 86 menu, vpnctl, Release Gate, and dual-client Release Skill contract checks, plus Swift type checking.
+- Completed full LiteOC.app, self-contained OpenConnect, and PKG builds; main CI and artifact identity checks passed.
 
 ## Full Changelog
 
-https://github.com/ren2019/LiteOC/compare/v1.4...v1.5
+https://github.com/ren2019/LiteOC/compare/v1.5...v1.6
