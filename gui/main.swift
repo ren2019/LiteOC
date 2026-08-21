@@ -6,20 +6,6 @@ let APPNAME   = "LiteOC"
 let VPNCTL    = "/usr/local/sbin/vpnctl"
 let ConfDir   = NSHomeDirectory() + "/Library/Application Support/LiteOC"
 let ConfPath  = ConfDir + "/config"
-let ACCOUNT   = "pin"
-
-// 默认配置模板 (占位符, 首次启动写入)
-let defaultConf = #"""
-# LiteOC 配置 — PIN 不在此文件 (在 macOS 钥匙串)
-# 改完保存, 下次连接即生效
-
-HOST="vpn.example.com:443"
-USER="your-username"
-GROUP="your-group"
-SERVERCERT=""                    # 留空 = 首次连接自动获取 (TOFU)
-KEYCHAIN_SERVICE="LiteOC"
-KEYCHAIN_ACCOUNT="pin"
-"""#
 
 // ---- 跑命令 ----
 @discardableResult
@@ -40,45 +26,28 @@ func run(_ exe: String, _ args: [String], stdin: String? = nil) -> String {
 
 // ---- 配置: 读 / 写 ----
 func loadConfig() -> [String: String] {
-    var d = [String: String]()
-    guard let txt = try? String(contentsOfFile: ConfPath, encoding: .utf8) else { return d }
-    for raw in txt.split(separator: "\n") {
-        let s = raw.trimmingCharacters(in: .whitespaces)
-        if s.isEmpty || s.hasPrefix("#") { continue }
-        guard let eq = s.firstIndex(of: "=") else { continue }
-        let k = s[..<eq].trimmingCharacters(in: .whitespaces)
-        var v = String(s[s.index(after: eq)...]).trimmingCharacters(in: .whitespaces)
-        if v.hasPrefix("\"") && v.hasSuffix("\"") && v.count >= 2 { v = String(v.dropFirst().dropLast()) }
-        d[String(k)] = v
-    }
-    return d
+    AppConfig.load(fromPath: ConfPath)
 }
-let CONF_ORDER = ["HOST", "USER", "GROUP", "SERVERCERT", "KEYCHAIN_SERVICE", "KEYCHAIN_ACCOUNT"]
 func writeConfig(_ c: [String: String]) {
-    var lines = ["# LiteOC 配置 — PIN 在 macOS 钥匙串", "# 保存即生效", ""]
-    for k in CONF_ORDER {
-        let v = c[k] ?? (k == "KEYCHAIN_SERVICE" ? "LiteOC" : k == "KEYCHAIN_ACCOUNT" ? "pin" : "")
-        lines.append("\(k)=\"\(v)\"")
-    }
-    try? (lines.joined(separator: "\n") + "\n").write(toFile: ConfPath, atomically: true, encoding: .utf8)
+    try? AppConfig.write(c, toPath: ConfPath)
 }
 func setConfigValue(_ key: String, _ value: String) { var c = loadConfig(); c[key] = value; writeConfig(c) }
 
 func ensureConfig() {
     let fm = FileManager.default
     try? fm.createDirectory(atPath: ConfDir, withIntermediateDirectories: true)
-    if !fm.fileExists(atPath: ConfPath) { try? defaultConf.write(toFile: ConfPath, atomically: true, encoding: .utf8) }
+    try? AppConfig.ensureExists(atPath: ConfPath)
 }
 
 // ---- 钥匙串 ----
 func rawPin(_ service: String) -> String? {
-    let s = run("/usr/bin/security", ["find-generic-password", "-s", service, "-a", ACCOUNT, "-w"])
+    let s = run("/usr/bin/security", ["find-generic-password", "-s", service, "-a", AppConfig.keychainAccount, "-w"])
     let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
     return t.isEmpty ? nil : t
 }
 func pinGet(_ target: String) -> String? { rawPin(target) }
 func pinSet(_ service: String, _ v: String) {
-    run("/usr/bin/security", ["add-generic-password", "-s", service, "-a", ACCOUNT, "-w", v, "-T", "/usr/bin/security", "-U"])
+    run("/usr/bin/security", ["add-generic-password", "-s", service, "-a", AppConfig.keychainAccount, "-w", v, "-T", "/usr/bin/security", "-U"])
 }
 
 // ---- 菜单主状态项 ----

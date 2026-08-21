@@ -33,6 +33,7 @@ LiteOC 菜单栏 App 的构建脚本与源码。用户向说明见[根 README](.
 ## 测试
 
 ```bash
+sh test/app_config_test.sh
 sh test/menu_presentation_test.sh
 sh test/vpnctl_status_test.sh
 sh test/vpnctl_route_test.sh
