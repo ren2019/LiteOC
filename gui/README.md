@@ -7,6 +7,7 @@ LiteOC 菜单栏 App 的构建脚本与源码。用户向说明见[根 README](.
 |---|---|
 | `main.swift` | App 源码:原生菜单、设置窗口、About/反馈入口、4s 轮询、TOFU pin 回写 |
 | `MenuPresentation.swift` | Tunnel 状态到菜单标题、提示、动作和色调的纯映射 |
+| `TunnelReducer.swift` | Tunnel 状态迁移、防抖、超时与网络变化规则的纯函数 |
 | `vpnctl` | root 助手:`start`(连接前修复过期网关路由)/ `stop`(SIGINT + 等待退出 + 路由验证)/ `repair`(启动恢复)/ `network`(物理接口/IP/网关指纹)/ `status` |
 | `build.sh` | 编译 + 生成图标(AppIcon + 菜单栏彩/灰)+ 写入版本 + 打包 `LiteOC.app` + 签名(无需 sudo) |
 | `setup-root.sh` | 一次性装 root 部分:`vpnctl` → `/usr/local/sbin`、写免密 sudoers、App → `/Applications`、校验 openconnect(需 sudo) |
@@ -36,6 +37,7 @@ LiteOC 菜单栏 App 的构建脚本与源码。用户向说明见[根 README](.
 sh test/app_config_test.sh
 sh test/config_fixture_test.sh
 sh test/menu_presentation_test.sh
+sh test/tunnel_reducer_test.sh
 sh test/vpnctl_status_test.sh
 sh test/vpnctl_route_test.sh
 ```

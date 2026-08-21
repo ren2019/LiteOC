@@ -34,6 +34,7 @@ jobs:
           sh gui/test/config_fixture_test.sh
           sh gui/test/menu_presentation_test.sh
           sh gui/test/vpnctl_client_test.sh
+          sh gui/test/tunnel_reducer_test.sh
           sh gui/test/vpnctl_locale_test.sh
           sh gui/test/vpnctl_status_test.sh
           sh gui/test/vpnctl_route_test.sh
