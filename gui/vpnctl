@@ -261,10 +261,11 @@ case "$cmd" in
     PIN="$(cat)"   # PIN 从 stdin 读 (App 从钥匙串喂入)
     [ -n "$PIN" ] || { echo "no-pin"; exit 2; }
     preexisting_routes="$(session_gateway_routes)" || route_failure $?
+    # OpenConnect 输出会进入 TOFU/status 解析器；固定 locale，避免 GUI 语言改变控制面契约。
     # 证书指纹为空 → 自动探测: 不带 servercert 跑一次, openconnect 会报出 pin (认证前失败, 安全)
     DISCOVERED=""
     if [ -z "$V_CERT" ]; then
-      V_CERT="$(echo | "$BIN" --user="$V_USER" --passwd-on-stdin "https://$V_HOST" 2>&1 \
+      V_CERT="$(echo | LC_ALL=C "$BIN" --user="$V_USER" --passwd-on-stdin "https://$V_HOST" 2>&1 \
                 | grep -oE 'pin-sha256:[A-Za-z0-9+/=]+' | head -1 || true)"
       if [ -z "$V_CERT" ]; then
         ROUTE_REPAIRED=0
@@ -275,7 +276,7 @@ case "$cmd" in
       DISCOVERED="$V_CERT"
     fi
     # stdin 顺序: 密码(第1行) + group(第2行); --background 后台驻留; 输出记日志供取 IP
-    if printf '%s\n%s\n' "$PIN" "$V_GROUP" | "$BIN" --background --syslog --pid-file="$PIDFILE" \
+    if printf '%s\n%s\n' "$PIN" "$V_GROUP" | LC_ALL=C "$BIN" --background --syslog --pid-file="$PIDFILE" \
          --user="$V_USER" --passwd-on-stdin --servercert="$V_CERT" \
          "https://$V_HOST" >"$LOG" 2>&1; then
       if record_owned_gateway_routes "$preexisting_routes"; then :; else
