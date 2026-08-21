@@ -21,7 +21,7 @@ miss=""
 [ -n "$V_HOST" ]   || miss="$miss HOST"
 [ -n "$V_USER" ]   || miss="$miss USER"
 [ -n "$V_GROUP" ]  || miss="$miss GROUP"
-[ -n "$miss" ] && { echo "config-error:缺$miss (检查配置文件)"; exit 3; }
+[ -n "$miss" ] && { echo "config-error:缺$miss"; exit 3; }
 
 PIDFILE="/tmp/liteoc-openconnect.pid"
 # 日志路径可由 LITEOC_LOG 覆盖 (仅用于 status 测试注入, 生产仍是默认值)

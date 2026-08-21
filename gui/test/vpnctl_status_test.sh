@@ -1,7 +1,7 @@
 #!/bin/sh
 # vpnctl status 契约测试 — 项目首个自动化测试
-# 通过 PATH 注入 fake pgrep / ifconfig + LITEOC_LOG 控制日志, 断言 status 三态输出。
-# 只验证外部输出 (down/connecting/connected<ip>), 不耦合内部解析实现。
+# 通过 PATH 注入 fake pgrep / ifconfig + LITEOC_LOG 控制日志, 断言 status 与配置错误输出。
+# 只验证外部输出,不耦合内部解析实现。
 # 用法: sh gui/test/vpnctl_status_test.sh
 set -eu
 
@@ -9,8 +9,14 @@ VPNCTL="$(cd "$(dirname "$0")/.." && pwd)/vpnctl"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 CONF="$WORK/conf"
+CONF_MISSING_HOST="$WORK/conf-missing-host"
+CONF_MISSING_HOST_GROUP="$WORK/conf-missing-host-group"
+CONF_MISSING_USER="$WORK/conf-missing-user"
 LOG="$WORK/oc.log"
 printf 'HOST=gw.example\nUSER=me\nGROUP=g1\n' > "$CONF"
+printf 'USER=me\nGROUP=g1\n' > "$CONF_MISSING_HOST"
+printf 'USER=me\n' > "$CONF_MISSING_HOST_GROUP"
+printf 'HOST=gw.example\nGROUP=g1\n' > "$CONF_MISSING_USER"
 
 pass=0; fail=0
 check() {   # desc  expected  actual
@@ -31,8 +37,20 @@ EOF
 chmod +x "$WORK/ifconfig" "$WORK/dscacheutil" "$WORK/route"
 
 run_status() { ( PATH="$WORK:$PATH" LITEOC_LOG="$LOG" LITEOC_TESTING=1 sh "$VPNCTL" status "$CONF" ); }
+check_config_error() { # desc command config expected
+  set +e
+  out=$(PATH="$WORK:$PATH" LITEOC_LOG="$LOG" LITEOC_TESTING=1 sh "$VPNCTL" "$2" "$3")
+  rc=$?
+  set -e
+  check "$1 输出" "$4" "$out"
+  check "$1 exit code" "3" "$rc"
+}
 
 echo "== vpnctl status 契约 =="
+
+check_config_error "status 缺单个必填字段" status "$CONF_MISSING_HOST" "config-error:缺 HOST"
+check_config_error "status 缺多个必填字段" status "$CONF_MISSING_HOST_GROUP" "config-error:缺 HOST GROUP"
+check_config_error "控制命令缺必填字段" stop "$CONF_MISSING_USER" "config-error:缺 USER"
 
 pgrep_miss
 out=$(run_status); check "无进程 → down" "down" "$out"
