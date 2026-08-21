@@ -418,6 +418,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         connectedDownLimit: 2
     )
     let vpnQueue = DispatchQueue(label: "local.liteoc.control")
+    let pollQueue = DispatchQueue(label: "local.liteoc.poll")
+    let networkReadQueue = DispatchQueue(label: "local.liteoc.network-read")
+    lazy var poller = TunnelPoller(workerQueue: pollQueue)
+    lazy var networkReader = BackgroundReadCoordinator<TunnelReducer.NetworkRead>(
+        workerQueue: networkReadQueue
+    )
     let vpnctl = VpnctlClient(vpnctlPath: VPNCTL, configPath: ConfPath)
     var service = "LiteOC"
     var configWin: ConfigWindow?
@@ -508,25 +514,58 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // 单一计时器回调: 只采集输入、调用纯 Reducer、解释 Effect。
+    // 单一计时器回调: 主线程只提交快照请求；读取完成后归约并渲染。
     @objc func tick() {
-        reloadConfig()
-        var network = reducerContext.connectionNetworkFingerprint
-        if state == .connecting || state == .connected,
-           reducerContext.connectionNetworkFingerprint != nil {
+        let phase = state
+        let baseline = reducerContext.connectionNetworkFingerprint
+        poller.request(
+            read: { [weak self] in
+                self?.readPollSample(phase: phase, baseline: baseline)
+                    ?? TunnelPollSample(snapshot: nil, network: nil, clearsMissingConfigFields: false)
+            },
+            deliver: { [weak self] sample in
+                guard let self else { return }
+                if let keychainService = sample.keychainService {
+                    self.service = keychainService
+                }
+                if sample.clearsMissingConfigFields {
+                    self.interpret([.clearMissingConfigFields])
+                }
+                self.reduce(sample.snapshot, network: sample.network)
+            }
+        )
+    }
+
+    func readPollSample(phase: TunnelState, baseline: Fingerprint?) -> TunnelPollSample {
+        let keychainService = loadConfig()["KEYCHAIN_SERVICE"] ?? "LiteOC"
+        var network = baseline
+        var networkReadSucceeded = false
+        if (phase == .connecting || phase == .connected), baseline != nil {
             do {
                 network = try vpnctl.network()
-                interpret([.clearMissingConfigFields])
+                networkReadSucceeded = true
             } catch let failure as VpnctlClientFailure {
                 if case let .configError(missingFields: missingFields) = failure {
-                    reduce(.configError(missingFields: missingFields), network: network)
-                } else {
-                    reduce(nil, network: nil)
+                    return TunnelPollSample(
+                        snapshot: .configError(missingFields: missingFields),
+                        network: network,
+                        clearsMissingConfigFields: false,
+                        keychainService: keychainService
+                    )
                 }
-                return
+                return TunnelPollSample(
+                    snapshot: nil,
+                    network: nil,
+                    clearsMissingConfigFields: false,
+                    keychainService: keychainService
+                )
             } catch {
-                reduce(nil, network: nil)
-                return
+                return TunnelPollSample(
+                    snapshot: nil,
+                    network: nil,
+                    clearsMissingConfigFields: false,
+                    keychainService: keychainService
+                )
             }
         }
 
@@ -536,12 +575,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             snapshot = nil
         }
+        let clearsMissingConfigFields: Bool
         if let snapshot, case .configError = snapshot {
-            // Reducer emits recordMissingConfigFields with the exact helper payload.
-        } else if snapshot != nil {
-            interpret([.clearMissingConfigFields])
+            clearsMissingConfigFields = networkReadSucceeded
+        } else {
+            clearsMissingConfigFields = networkReadSucceeded || snapshot != nil
         }
-        reduce(snapshot, network: network)
+        return TunnelPollSample(
+            snapshot: snapshot,
+            network: network,
+            clearsMissingConfigFields: clearsMissingConfigFields,
+            keychainService: keychainService
+        )
     }
 
     func reduce(_ snapshot: StatusSnapshot?, network: Fingerprint?) {
@@ -556,11 +601,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func reduce(_ event: TunnelReducer.Event) {
+        poller.invalidate()
         apply(TunnelReducer.reduce(state: reducerContext, event: event, now: Date()))
     }
 
     func apply(_ result: TunnelReducer.Result, snapshot: StatusSnapshot? = nil) {
         let previousState = state
+        if result.state != reducerContext {
+            networkReader.invalidate()
+        }
         reducerContext = result.state
         if case let .connected(ip: ip)? = snapshot, state == .connected {
             connectedIP = ip
@@ -613,13 +662,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             case .repairTunnel:
                 repairTunnelEffect()
             case .readConnectionNetwork:
-                reduce(.connectionNetworkRead(readNetwork()))
+                readConnectionNetworkEffect()
             case .startConnect:
                 startConnectionEffect()
             case let .stopTunnel(after: successState):
                 stopTunnelEffect(after: successState)
             case .captureFingerprint:
-                reduce(.fingerprintRead(readNetwork()))
+                captureFingerprintEffect()
             case let .persistCertificate(certificate):
                 setConfigValue("SERVERCERT", certificate)
             case .refreshStatus:
@@ -650,6 +699,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             return .failed
         }
+    }
+
+    func readNetworkEffect(_ makeEvent: @escaping (TunnelReducer.NetworkRead) -> TunnelReducer.Event) {
+        let expectedContext = reducerContext
+        networkReader.request(
+            read: { [weak self] in self?.readNetwork() ?? .failed },
+            deliver: { [weak self] result in
+                guard let self, self.reducerContext == expectedContext else { return }
+                self.reduce(makeEvent(result))
+            }
+        )
+    }
+
+    func readConnectionNetworkEffect() {
+        readNetworkEffect { .connectionNetworkRead($0) }
+    }
+
+    func captureFingerprintEffect() {
+        readNetworkEffect { .fingerprintRead($0) }
     }
 
     func performPrimaryMenuAction() {
@@ -725,11 +793,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func showConfig(focusPin: Bool = false) {
         if configWin == nil {
             configWin = ConfigWindow(service: service) { [weak self] in
+                self?.invalidateBackgroundReads()
                 self?.helperMissingConfigFields = []
                 self?.reloadConfig(); self?.updatePrimaryMenu()
             }
         }
         configWin?.service = service; configWin?.show(focusPin: focusPin)
+    }
+
+    func invalidateBackgroundReads() {
+        poller.invalidate()
+        networkReader.invalidate()
     }
 
     @objc func showAbout() {
