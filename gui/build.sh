@@ -41,7 +41,7 @@ run_swift make_menubar.swift
 
 echo "→ 编译 Swift…"
 mkdir -p "$BINDIR"
-run_swiftc main.swift AppConfig.swift MenuPresentation.swift -o "$BINDIR/$APPNAME" -framework Cocoa -framework ServiceManagement
+run_swiftc main.swift AppConfig.swift MenuPresentation.swift VpnctlClient.swift -o "$BINDIR/$APPNAME" -framework Cocoa -framework ServiceManagement
 
 echo "→ 打包 .app …"
 rm -rf "$APP"

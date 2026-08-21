@@ -396,8 +396,6 @@ final class ConfigWindow: NSObject {
     }
 }
 
-struct NetworkFingerprint: Equatable { let rawValue: String }
-
 class AppDelegate: NSObject, NSApplicationDelegate {
     var item: NSStatusItem!
     var primaryMenuView: PrimaryMenuItemView!
@@ -413,8 +411,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var downStreak = 0
     var timer: Timer?
     var connectStart: Date?
-    var connectionNetworkFingerprint: NetworkFingerprint?
+    var connectionNetworkFingerprint: Fingerprint?
+    var helperMissingConfigFields: [String] = []
     let vpnQueue = DispatchQueue(label: "local.liteoc.control")
+    let vpnctl = VpnctlClient(vpnctlPath: VPNCTL, configPath: ConfPath)
     var service = "LiteOC"
     var configWin: ConfigWindow?
 
@@ -425,9 +425,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func reloadConfig() { service = loadConfig()["KEYCHAIN_SERVICE"] ?? "LiteOC" }
     func currentMenuPresentation() -> MenuPresentation {
-        menuPresentation(for: state, isConfigured: profileIsConfigured(loadConfig()), connectedIP: connectedIP)
+        let isConfigured = helperMissingConfigFields.isEmpty && profileIsConfigured(loadConfig())
+        return menuPresentation(for: state, isConfigured: isConfigured, connectedIP: connectedIP)
     }
     func updatePrimaryMenu() { primaryMenuView?.update(currentMenuPresentation()) }
+    func enterUnconfigured(missingFields: [String]) {
+        helperMissingConfigFields = missingFields
+        enter(.disconnected)
+    }
 
     // 连接中旋转 spinner: 预生成 12 帧 (每 30°), template 随菜单栏明暗自适应; 旋转由独立 spinTimer 驱动
     func loadSpinnerFrames() {
@@ -491,32 +496,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         repairAtLaunch()
     }
 
-    func runStatus() -> String {
-        run("/usr/bin/sudo", [VPNCTL, "status", ConfPath]).trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-    func runNetwork() -> NetworkFingerprint? {
-        let value = run("/usr/bin/sudo", [VPNCTL, "network", ConfPath]).trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.hasPrefix("network ") ? NetworkFingerprint(rawValue: value) : nil
-    }
-    func controlToken(_ output: String, _ allowed: [String]) -> String {
-        let lines = output.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespaces) }
-        for line in lines.reversed() {
-            if let token = allowed.first(where: { line == $0 || line.hasPrefix($0 + " ") }) { return token }
-        }
-        return lines.last ?? ""
-    }
     func repairAtLaunch() {
         let host = loadConfig()["HOST"] ?? ""
         if host.isEmpty || host.hasPrefix("vpn.example") { enter(.disconnected); return }
         enter(.repairing)
         vpnQueue.async {
-            let token = self.controlToken(run("/usr/bin/sudo", [VPNCTL, "repair", ConfPath]),
-                                          ["route-clean", "route-repaired", "already-running",
-                                           "route-check-failed", "route-cleanup-failed"])
+            let result: Result<RepairResult, VpnctlClientFailure>
+            do {
+                result = .success(try self.vpnctl.repair())
+            } catch let failure as VpnctlClientFailure {
+                result = .failure(failure)
+            } catch {
+                result = .failure(.spawnFailed)
+            }
             DispatchQueue.main.async {
-                switch token {
-                case "route-clean", "route-repaired", "already-running": self.enter(.disconnected); self.tick()
-                default: self.enter(.errRoute)
+                switch result {
+                case .success(.clean), .success(.repaired), .success(.alreadyRunning):
+                    self.helperMissingConfigFields = []
+                    self.enter(.disconnected)
+                    self.tick()
+                case let .success(.configError(missingFields: missingFields)):
+                    self.enterUnconfigured(missingFields: missingFields)
+                case .success(.routeFailure), .failure:
+                    self.enter(.errRoute)
                 }
             }
         }
@@ -526,36 +528,83 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func tick() {
         reloadConfig()
         if state == .connecting || state == .connected, let baseline = connectionNetworkFingerprint {
-            guard let current = runNetwork() else { beginDisconnect(after: .errNetworkChanged); return }
-            if current != baseline { beginDisconnect(after: .errNetworkChanged); return }
+            do {
+                guard let current = try vpnctl.network() else {
+                    beginDisconnect(after: .errNetworkChanged)
+                    return
+                }
+                helperMissingConfigFields = []
+                if current != baseline {
+                    beginDisconnect(after: .errNetworkChanged)
+                    return
+                }
+            } catch let failure as VpnctlClientFailure {
+                if case let .configError(missingFields: missingFields) = failure {
+                    enterUnconfigured(missingFields: missingFields)
+                } else {
+                    beginDisconnect(after: .errNetworkChanged)
+                }
+                return
+            } catch {
+                beginDisconnect(after: .errNetworkChanged)
+                return
+            }
         }
-        let parts = runStatus().split(separator: " ")
-        let st = String(parts.first ?? "")
-        let ip = parts.count > 1 ? parts.dropFirst().joined(separator: " ") : ""
-        if st == "route-check-failed", state == .disconnected || state == .connecting || state == .connected {
+        let snapshot: StatusSnapshot
+        do {
+            snapshot = try vpnctl.status()
+        } catch {
+            if state == .connected { downStreak = 0 }
+            if state == .connecting,
+               let startedAt = connectStart,
+               Date().timeIntervalSince(startedAt) > 30 {
+                beginDisconnect(after: .errTimeout)
+                return
+            }
+            updatePrimaryMenu()
+            reschedule()
+            return
+        }
+        if case let .configError(missingFields: missingFields) = snapshot {
+            enterUnconfigured(missingFields: missingFields)
+            return
+        }
+        helperMissingConfigFields = []
+        if snapshot == .routeCheckFailed,
+           state == .disconnected || state == .connecting || state == .connected {
             enter(.errRoute)
             return
         }
         switch state {
         case .disconnected:
-            if st == "connected" { enter(.connected, ip: ip) }
-            else if st == "connecting" { enter(.connecting) }   // 外部启动的连接, 跟进
-            else if st == "route-stale" { beginDisconnect(after: .disconnected); return }
+            switch snapshot {
+            case let .connected(ip: ip): enter(.connected, ip: ip)
+            case .connecting: enter(.connecting)   // 外部启动的连接, 跟进
+            case .routeStale: beginDisconnect(after: .disconnected); return
+            default: break
+            }
         case .connecting:
-            if st == "connected" { enter(.connected, ip: ip) }
-            else if st == "route-stale" { beginDisconnect(after: .errNetworkChanged); return }
-            else if st == "down" {
+            switch snapshot {
+            case let .connected(ip: ip): enter(.connected, ip: ip); return
+            case .routeStale: beginDisconnect(after: .errNetworkChanged); return
+            case .down:
                 // openconnect 启动后退出 (>3s) → 连接失败;刚启动短暂 down 容忍
                 if let s = connectStart, Date().timeIntervalSince(s) > 3 { beginDisconnect(after: .errTimeout); return }
+            default: break
             }
-            else if let s = connectStart, Date().timeIntervalSince(s) > 30 { beginDisconnect(after: .errTimeout); return }
+            if let s = connectStart, Date().timeIntervalSince(s) > 30 { beginDisconnect(after: .errTimeout); return }
         case .connected:
-            if st == "connected" { connectedIP = ip; updatePrimaryMenu(); downStreak = 0 }
-            else if st == "route-stale" { beginDisconnect(after: .errNetworkChanged); return }
-            else if st == "down" {                 // 防抖: 连续 2 次 down 才判掉线 (openconnect 内置重连瞬断不误触)
+            switch snapshot {
+            case let .connected(ip: ip):
+                connectedIP = ip; updatePrimaryMenu(); downStreak = 0
+            case .routeStale:
+                beginDisconnect(after: .errNetworkChanged); return
+            case .down:                             // 防抖: 连续 2 次 down 才判掉线 (openconnect 内置重连瞬断不误触)
                 downStreak += 1
                 if downStreak >= 2 { beginDisconnect(after: .errDropped); return }
-            } else { downStreak = 0 }              // connecting: openconnect 内置重连中, 维持 connected
+            default:
+                downStreak = 0                      // connecting: openconnect 内置重连中, 维持 connected
+            }
         case .repairing, .disconnecting, .errTimeout, .errAuth, .errCert, .errDropped,
              .errRoute, .errStop, .errNetworkChanged:
             break                                   // 保持当前状态,等后台操作或用户动作
@@ -587,8 +636,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .disconnecting:
             item.button?.image = grayImg
         case .connected:
-            guard let current = runNetwork() else { beginDisconnect(after: .errNetworkChanged); return }
-            connectionNetworkFingerprint = current
+            do {
+                guard let current = try vpnctl.network() else {
+                    beginDisconnect(after: .errNetworkChanged)
+                    return
+                }
+                helperMissingConfigFields = []
+                connectionNetworkFingerprint = current
+            } catch let failure as VpnctlClientFailure {
+                if case let .configError(missingFields: missingFields) = failure {
+                    enterUnconfigured(missingFields: missingFields)
+                } else {
+                    beginDisconnect(after: .errNetworkChanged)
+                }
+                return
+            } catch {
+                beginDisconnect(after: .errNetworkChanged)
+                return
+            }
             item.button?.image = colorImg
         case .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged:
             item.button?.image = redImg
@@ -611,27 +676,55 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if case .connecting = state { return }      // 已在连接, 忽略重复点击
         guard profileIsConfigured(loadConfig()) else { enter(.disconnected); showConfig(); return }
         guard let pin = pinGet(service) else { enter(.disconnected); showConfig(focusPin: true); return }
-        guard let current = runNetwork() else { enter(.errRoute); return }
-        connectionNetworkFingerprint = current
+        do {
+            guard let current = try vpnctl.network() else {
+                enter(.errNetworkChanged)
+                return
+            }
+            helperMissingConfigFields = []
+            connectionNetworkFingerprint = current
+        } catch let failure as VpnctlClientFailure {
+            if case let .configError(missingFields: missingFields) = failure {
+                enterUnconfigured(missingFields: missingFields)
+            } else {
+                enter(.errRoute)
+            }
+            return
+        } catch {
+            enter(.errRoute)
+            return
+        }
         enter(.connecting)
         vpnQueue.async {
-            let out = run("/usr/bin/sudo", [VPNCTL, "start", ConfPath], stdin: pin)
-            let lines = out.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespaces) }
-            if let dc = lines.first(where: { $0.hasPrefix("discovered-cert:") }) {
-                setConfigValue("SERVERCERT", String(dc.dropFirst("discovered-cert:".count)))   // TOFU 回写
+            let result: Result<StartResult, VpnctlClientFailure>
+            do {
+                let value = try self.vpnctl.start(pin: pin)
+                if case let .started(discoveredCert: discoveredCert?) = value {
+                    setConfigValue("SERVERCERT", discoveredCert)   // TOFU 回写仍由 App 用户态负责
+                }
+                result = .success(value)
+            } catch let failure as VpnctlClientFailure {
+                result = .failure(failure)
+            } catch {
+                result = .failure(.spawnFailed)
             }
-            let r = self.controlToken(out, ["started", "auth-failed", "no-pin", "already-running",
-                                            "cert-discover-failed", "openconnect-not-found",
-                                            "route-check-failed", "route-cleanup-failed"])
             DispatchQueue.main.async {
                 if self.state != .connecting { return }   // 已离开 connecting (用户已断开等), 丢弃迟到的结果
-                switch r {
-                case "auth-failed": self.enter(.errAuth)
-                case "cert-discover-failed": self.enter(.errCert)
-                case "openconnect-not-found": self.enter(.disconnected); self.alert("缺少依赖", "重新运行 LiteOC 安装器(.pkg)以补齐内置 openconnect。")
-                case "no-pin": self.enter(.disconnected)
-                case "route-check-failed", "route-cleanup-failed": self.enter(.errRoute)
-                default: break   // started / already-running: 等 tick 检测 connected
+                switch result {
+                case .success(.authenticationFailed): self.enter(.errAuth)
+                case .success(.certificateDiscoveryFailed): self.enter(.errCert)
+                case .success(.openconnectMissing):
+                    self.enter(.disconnected)
+                    self.alert("缺少依赖", "重新运行 LiteOC 安装器(.pkg)以补齐内置 openconnect。")
+                case .success(.noPin): self.enter(.disconnected)
+                case .success(.routeFailure): self.enter(.errRoute)
+                case let .success(.configError(missingFields: missingFields)):
+                    self.enterUnconfigured(missingFields: missingFields)
+                case .success(.started), .success(.alreadyRunning), .success(.stopTimeout):
+                    self.helperMissingConfigFields = []
+                    break   // 等 tick 检测 connected
+                case .failure:
+                    break   // 保持连接中,由既有超时规则收敛
                 }
             }
         }
@@ -643,15 +736,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if state == .disconnecting { return }
         enter(.disconnecting)
         vpnQueue.async {
-            let token = self.controlToken(run("/usr/bin/sudo", [VPNCTL, "stop", ConfPath]),
-                                          ["stopped", "not-running", "stop-timeout",
-                                           "route-check-failed", "route-cleanup-failed"])
+            let result: Result<StopResult, VpnctlClientFailure>
+            do {
+                result = .success(try self.vpnctl.stop())
+            } catch let failure as VpnctlClientFailure {
+                result = .failure(failure)
+            } catch {
+                result = .failure(.spawnFailed)
+            }
             DispatchQueue.main.async {
                 self.connectionNetworkFingerprint = nil
-                switch token {
-                case "stopped", "not-running": self.enter(successState)
-                case "stop-timeout": self.enter(.errStop)
-                default: self.enter(.errRoute)
+                switch result {
+                case .success(.stopped):
+                    self.helperMissingConfigFields = []
+                    self.enter(successState)
+                case .success(.stopTimeout):
+                    self.enter(.errStop)
+                case .success(.routeFailure), .failure:
+                    self.enter(.errRoute)
+                case let .success(.configError(missingFields: missingFields)):
+                    self.enterUnconfigured(missingFields: missingFields)
                 }
             }
         }
@@ -662,6 +766,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func showConfig(focusPin: Bool = false) {
         if configWin == nil {
             configWin = ConfigWindow(service: service) { [weak self] in
+                self?.helperMissingConfigFields = []
                 self?.reloadConfig(); self?.updatePrimaryMenu()
             }
         }
