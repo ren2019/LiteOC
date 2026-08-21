@@ -13,6 +13,16 @@ enum MenuTone: Equatable {
     case neutral, busy, connected, error
 }
 
+enum SpinnerAnimationAction: Equatable {
+    case none, start, stop
+}
+
+func spinnerAnimationAction(from previous: TunnelState, to current: TunnelState) -> SpinnerAnimationAction {
+    if previous != .connecting, current == .connecting { return .start }
+    if previous == .connecting, current != .connecting { return .stop }
+    return .none
+}
+
 enum PrimaryMenuLayout {
     static let width: CGFloat = 272
     static let height: CGFloat = 46
@@ -41,6 +51,13 @@ func profileIsConfigured(_ config: [String: String]) -> Bool {
     return usable("HOST", placeholders: ["vpn.example.com:443"])
         && usable("USER", placeholders: ["your-username"])
         && usable("GROUP", placeholders: ["your-group"])
+}
+
+func effectiveProfileIsConfigured(
+    _ config: [String: String],
+    missingConfigFields: [String]
+) -> Bool {
+    missingConfigFields.isEmpty && profileIsConfigured(config)
 }
 
 func menuPresentation(

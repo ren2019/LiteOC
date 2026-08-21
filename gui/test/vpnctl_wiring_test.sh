@@ -25,14 +25,6 @@ check_contains() {
   fi
 }
 
-check_equal() {
-  if [ "$2" = "$3" ]; then
-    pass=$((pass + 1)); printf '  ok   %s\n' "$1"
-  else
-    fail=$((fail + 1)); printf '  FAIL %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"
-  fi
-}
-
 echo "== App / VpnctlClient wiring contract =="
 
 check_absent "main.swift 不复述 Root Helper 输出 token" \
@@ -40,17 +32,8 @@ check_absent "main.swift 不复述 Root Helper 输出 token" \
 check_absent "main.swift 不保留 controlToken 白名单解析" 'controlToken'
 check_absent "main.swift 不直接 spawn vpnctl" 'run\("/usr/bin/sudo", \[VPNCTL'
 check_contains "App 构建输入包含 VpnctlClient.swift" "VpnctlClient.swift" "$BUILD"
-
-connected_snapshot_exits="$(awk '
-  /^        case \.connecting:$/ { inConnecting = 1; next }
-  inConnecting && /^        case \.connected:$/ { exit }
-  inConnecting && /case let \.connected\(ip: ip\):/ { inConnectedSnapshot = 1 }
-  inConnectedSnapshot && !/case let \.connected\(ip: ip\):/ && /^            case / { inConnectedSnapshot = 0 }
-  inConnectedSnapshot && /enter\(\.connected, ip: ip\)/ { entered = 1 }
-  inConnectedSnapshot && /return/ { returned = 1 }
-  END { print entered && returned ? "yes" : "no" }
-' "$MAIN")"
-check_equal "connected 快照优先于 connecting 超时" "yes" "$connected_snapshot_exits"
+check_contains "App 状态快照交给 TunnelReducer 归约" "TunnelReducer.reduce(" "$MAIN"
+check_contains "App 构建输入包含 TunnelReducer.swift" "TunnelReducer.swift" "$BUILD"
 
 printf '\n%d 通过, %d 失败\n' "$pass" "$fail"
 [ "$fail" = 0 ]

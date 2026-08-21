@@ -35,6 +35,9 @@ jobs:
           sh gui/test/menu_presentation_test.sh
           sh gui/test/vpnctl_client_test.sh
           sh gui/test/tunnel_reducer_test.sh
+          sh gui/test/tunnel_events_test.sh
+          sh gui/test/app_architecture_test.sh
+          sh gui/test/app_bundle_resources_test.sh
           sh gui/test/vpnctl_wiring_test.sh
           sh gui/test/vpnctl_locale_test.sh
           sh gui/test/vpnctl_status_test.sh

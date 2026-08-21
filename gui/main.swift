@@ -2,7 +2,6 @@ import Cocoa
 import ServiceManagement
 
 // ---- 硬编码 (不进用户配置) ----
-let APPNAME   = "LiteOC"
 let VPNCTL    = "/usr/local/sbin/vpnctl"
 let ConfDir   = NSHomeDirectory() + "/Library/Application Support/LiteOC"
 let ConfPath  = ConfDir + "/config"
@@ -45,7 +44,6 @@ func rawPin(_ service: String) -> String? {
     let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
     return t.isEmpty ? nil : t
 }
-func pinGet(_ target: String) -> String? { rawPin(target) }
 func pinSet(_ service: String, _ v: String) {
     run("/usr/bin/security", ["add-generic-password", "-s", service, "-a", AppConfig.keychainAccount, "-w", v, "-T", "/usr/bin/security", "-U"])
 }
@@ -306,7 +304,7 @@ final class ConfigWindow: NSObject {
         certSec.stringValue = cert; certPlain.stringValue = cert
         certRevealed = false; certSec.isHidden = false; certPlain.isHidden = true; certToggle.title = "显示"
         validation.isHidden = true
-        pinState = pinGet(service) == nil ? .empty : .managed
+        pinState = rawPin(service) == nil ? .empty : .managed
     }
 
     @objc func toggleCert() {
@@ -320,7 +318,7 @@ final class ConfigWindow: NSObject {
     func rebuildPinRow(focus: Bool = false) {
         let content = pinBox.contentView ?? pinBox
         content.subviews.forEach { $0.removeFromSuperview() }
-        let managed = pinGet(service) != nil
+        let managed = rawPin(service) != nil
         pinBox.fillColor = (managed && pinState != .editing)
             ? NSColor.systemGreen.withAlphaComponent(0.12) : .controlBackgroundColor
 
@@ -357,7 +355,7 @@ final class ConfigWindow: NSObject {
     }
 
     @objc func editPin() { pinState = .editing; rebuildPinRow(focus: true) }
-    @objc func cancelEditPin() { pinState = pinGet(service) == nil ? .empty : .managed; rebuildPinRow() }
+    @objc func cancelEditPin() { pinState = rawPin(service) == nil ? .empty : .managed; rebuildPinRow() }
     @objc func savePin() {
         let value = pinField.stringValue
         guard !value.isEmpty else { showValidation("请输入 PIN 后再存入钥匙串。"); win.makeFirstResponder(pinField); return }
@@ -386,7 +384,7 @@ final class ConfigWindow: NSObject {
 
     @objc func doClose() {
         pinField.stringValue = ""
-        pinState = pinGet(service) == nil ? .empty : .managed
+        pinState = rawPin(service) == nil ? .empty : .managed
         win.close()
     }
     func show(focusPin: Bool = false) {
@@ -403,16 +401,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var colorImg: NSImage!
     var grayImg: NSImage!
     var redImg: NSImage!
-    var spinnerFrames: [NSImage] = []
-    var spinStep = 0
-    var spinTimer: Timer?
-    var state: TunnelState = .disconnected
+    var spinner: NSProgressIndicator!
+    var reducerContext: TunnelReducer.Context = .init(
+        phase: .disconnected,
+        downStreak: 0,
+        connectStart: nil,
+        connectionNetworkFingerprint: nil
+    )
+    var state: TunnelState { reducerContext.phase }
     var connectedIP = ""
-    var downStreak = 0
     var timer: Timer?
-    var connectStart: Date?
-    var connectionNetworkFingerprint: Fingerprint?
     var helperMissingConfigFields: [String] = []
+    let reducerThresholds = TunnelReducer.Thresholds(
+        connectingDownGrace: 3,
+        connectingTimeout: 30,
+        connectedDownLimit: 2
+    )
     let vpnQueue = DispatchQueue(label: "local.liteoc.control")
     let vpnctl = VpnctlClient(vpnctlPath: VPNCTL, configPath: ConfPath)
     var service = "LiteOC"
@@ -425,50 +429,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     func reloadConfig() { service = loadConfig()["KEYCHAIN_SERVICE"] ?? "LiteOC" }
     func currentMenuPresentation() -> MenuPresentation {
-        let isConfigured = helperMissingConfigFields.isEmpty && profileIsConfigured(loadConfig())
+        let isConfigured = effectiveProfileIsConfigured(
+            loadConfig(),
+            missingConfigFields: helperMissingConfigFields
+        )
         return menuPresentation(for: state, isConfigured: isConfigured, connectedIP: connectedIP)
     }
     func updatePrimaryMenu() { primaryMenuView?.update(currentMenuPresentation()) }
-    func enterUnconfigured(missingFields: [String]) {
-        helperMissingConfigFields = missingFields
-        enter(.disconnected)
-    }
-
-    // 连接中旋转 spinner: 预生成 12 帧 (每 30°), template 随菜单栏明暗自适应; 旋转由独立 spinTimer 驱动
-    func loadSpinnerFrames() {
-        let p = Bundle.main.path(forResource: "menubar_spinner", ofType: "png") ?? ""
-        guard let base = NSImage(contentsOfFile: p) else { return }
-        base.isTemplate = true; base.size = NSSize(width: 18, height: 18)
-        spinnerFrames = (0..<12).map { rotateImg(base, CGFloat($0) * 30) }
-    }
-    func rotateImg(_ img: NSImage, _ deg: CGFloat) -> NSImage {
-        let S: CGFloat = 18
-        let r = NSImage(size: NSSize(width: S, height: S)); r.lockFocus()
-        let ctx = NSGraphicsContext.current!.cgContext
-        ctx.translateBy(x: S/2, y: S/2); ctx.rotate(by: -deg * .pi / 180); ctx.translateBy(x: -S/2, y: -S/2)
-        img.draw(in: NSRect(x: 0, y: 0, width: S, height: S), from: .zero, operation: .sourceOver, fraction: 1)
-        r.unlockFocus(); r.isTemplate = true; r.size = NSSize(width: 18, height: 18)
-        return r
-    }
-    @objc func spinTick() {
-        guard !spinnerFrames.isEmpty else { return }
-        spinStep = (spinStep + 1) % spinnerFrames.count
-        item.button?.image = spinnerFrames[spinStep]
-    }
-    func startSpin() {
-        guard !spinnerFrames.isEmpty else { return }
-        item.button?.image = spinnerFrames[0]
-        guard spinTimer == nil else { return }
-        let t = Timer(timeInterval: 0.08, target: self, selector: #selector(spinTick), userInfo: nil, repeats: true)
-        RunLoop.main.add(t, forMode: .common); spinTimer = t
-    }
-    func stopSpin() { spinTimer?.invalidate(); spinTimer = nil }
-
     func applicationDidFinishLaunching(_ n: Notification) {
         ensureConfig(); reloadConfig()
-        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray", template: true); redImg = loadImg("menubar_red"); loadSpinnerFrames()
+        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray", template: true); redImg = loadImg("menubar_red")
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.imagePosition = .imageOnly; item.button?.image = grayImg
+        spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        if let button = item.button {
+            button.addSubview(spinner)
+            NSLayoutConstraint.activate([
+                spinner.centerXAnchor.constraint(equalTo: button.centerXAnchor),
+                spinner.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+                spinner.widthAnchor.constraint(equalToConstant: 16),
+                spinner.heightAnchor.constraint(equalToConstant: 16)
+            ])
+        }
 
         let menu = NSMenu(); menu.autoenablesItems = false
         primaryMenuView = PrimaryMenuItemView(
@@ -498,8 +484,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func repairAtLaunch() {
         let host = loadConfig()["HOST"] ?? ""
-        if host.isEmpty || host.hasPrefix("vpn.example") { enter(.disconnected); return }
-        enter(.repairing)
+        reduce(.launch(profileConfigured: !host.isEmpty && !host.hasPrefix("vpn.example")))
+    }
+
+    func repairTunnelEffect() {
         vpnQueue.async {
             let result: Result<RepairResult, VpnctlClientFailure>
             do {
@@ -511,109 +499,79 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
             DispatchQueue.main.async {
                 switch result {
-                case .success(.clean), .success(.repaired), .success(.alreadyRunning):
-                    self.helperMissingConfigFields = []
-                    self.enter(.disconnected)
-                    self.tick()
-                case let .success(.configError(missingFields: missingFields)):
-                    self.enterUnconfigured(missingFields: missingFields)
-                case .success(.routeFailure), .failure:
-                    self.enter(.errRoute)
+                case let .success(value):
+                    self.reduce(.repairCompleted(value))
+                case .failure:
+                    self.reduce(.repairFailed)
                 }
             }
         }
     }
 
-    // 单一计时器回调: 消费 vpnctl 状态快照,叠加时间/意图维度派生 UI 状态机
+    // 单一计时器回调: 只采集输入、调用纯 Reducer、解释 Effect。
     @objc func tick() {
         reloadConfig()
-        if state == .connecting || state == .connected, let baseline = connectionNetworkFingerprint {
+        var network = reducerContext.connectionNetworkFingerprint
+        if state == .connecting || state == .connected,
+           reducerContext.connectionNetworkFingerprint != nil {
             do {
-                guard let current = try vpnctl.network() else {
-                    beginDisconnect(after: .errNetworkChanged)
-                    return
-                }
-                helperMissingConfigFields = []
-                if current != baseline {
-                    beginDisconnect(after: .errNetworkChanged)
-                    return
-                }
+                network = try vpnctl.network()
+                interpret([.clearMissingConfigFields])
             } catch let failure as VpnctlClientFailure {
                 if case let .configError(missingFields: missingFields) = failure {
-                    enterUnconfigured(missingFields: missingFields)
+                    reduce(.configError(missingFields: missingFields), network: network)
                 } else {
-                    beginDisconnect(after: .errNetworkChanged)
+                    reduce(nil, network: nil)
                 }
                 return
             } catch {
-                beginDisconnect(after: .errNetworkChanged)
+                reduce(nil, network: nil)
                 return
             }
         }
-        let snapshot: StatusSnapshot
+
+        let snapshot: StatusSnapshot?
         do {
             snapshot = try vpnctl.status()
         } catch {
-            if state == .connected { downStreak = 0 }
-            if state == .connecting,
-               let startedAt = connectStart,
-               Date().timeIntervalSince(startedAt) > 30 {
-                beginDisconnect(after: .errTimeout)
-                return
-            }
-            updatePrimaryMenu()
-            reschedule()
-            return
+            snapshot = nil
         }
-        if case let .configError(missingFields: missingFields) = snapshot {
-            enterUnconfigured(missingFields: missingFields)
-            return
+        if let snapshot, case .configError = snapshot {
+            // Reducer emits recordMissingConfigFields with the exact helper payload.
+        } else if snapshot != nil {
+            interpret([.clearMissingConfigFields])
         }
-        helperMissingConfigFields = []
-        if snapshot == .routeCheckFailed,
-           state == .disconnected || state == .connecting || state == .connected {
-            enter(.errRoute)
-            return
-        }
-        switch state {
-        case .disconnected:
-            switch snapshot {
-            case let .connected(ip: ip): enter(.connected, ip: ip)
-            case .connecting: enter(.connecting)   // 外部启动的连接, 跟进
-            case .routeStale: beginDisconnect(after: .disconnected); return
-            default: break
-            }
-        case .connecting:
-            switch snapshot {
-            case let .connected(ip: ip): enter(.connected, ip: ip); return
-            case .routeStale: beginDisconnect(after: .errNetworkChanged); return
-            case .down:
-                // openconnect 启动后退出 (>3s) → 连接失败;刚启动短暂 down 容忍
-                if let s = connectStart, Date().timeIntervalSince(s) > 3 { beginDisconnect(after: .errTimeout); return }
-            default: break
-            }
-            if let s = connectStart, Date().timeIntervalSince(s) > 30 { beginDisconnect(after: .errTimeout); return }
-        case .connected:
-            switch snapshot {
-            case let .connected(ip: ip):
-                connectedIP = ip; updatePrimaryMenu(); downStreak = 0
-            case .routeStale:
-                beginDisconnect(after: .errNetworkChanged); return
-            case .down:                             // 防抖: 连续 2 次 down 才判掉线 (openconnect 内置重连瞬断不误触)
-                downStreak += 1
-                if downStreak >= 2 { beginDisconnect(after: .errDropped); return }
-            default:
-                downStreak = 0                      // connecting: openconnect 内置重连中, 维持 connected
-            }
-        case .repairing, .disconnecting, .errTimeout, .errAuth, .errCert, .errDropped,
-             .errRoute, .errStop, .errNetworkChanged:
-            break                                   // 保持当前状态,等后台操作或用户动作
-        }
-        updatePrimaryMenu()
-        reschedule()
+        reduce(snapshot, network: network)
     }
 
-    // 状态驱动单一计时器频率: connecting 0.5s (状态检测), 其余 4s; 连接中的旋转由独立 spinTimer 驱动
+    func reduce(_ snapshot: StatusSnapshot?, network: Fingerprint?) {
+        let result = TunnelReducer.reduce(
+            state: reducerContext,
+            snapshot: snapshot,
+            network: network,
+            now: Date(),
+            thresholds: reducerThresholds
+        )
+        apply(result, snapshot: snapshot)
+    }
+
+    func reduce(_ event: TunnelReducer.Event) {
+        apply(TunnelReducer.reduce(state: reducerContext, event: event, now: Date()))
+    }
+
+    func apply(_ result: TunnelReducer.Result, snapshot: StatusSnapshot? = nil) {
+        let previousState = state
+        reducerContext = result.state
+        if case let .connected(ip: ip)? = snapshot, state == .connected {
+            connectedIP = ip
+        } else if state != .connected {
+            connectedIP = ""
+        }
+        updateStatePresentation(from: previousState)
+        interpret(result.effects)
+    }
+
+    // 状态驱动单一计时器频率: connecting 0.5s (状态检测),其余 4s。
     func reschedule() {
         let want: TimeInterval = (state == .connecting) ? 0.5 : 4.0
         if let t = timer, t.timeInterval == want { return }
@@ -622,44 +580,76 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         RunLoop.main.add(t, forMode: .common); timer = t
     }
 
-    func enter(_ s: TunnelState, ip: String = "") {
-        state = s; downStreak = 0
-        connectedIP = (s == .connected) ? ip : ""
-        if s != .connecting { stopSpin() }
-        switch s {
+    func updateStatePresentation(from previousState: TunnelState) {
+        switch spinnerAnimationAction(from: previousState, to: state) {
+        case .start:
+            spinner.startAnimation(nil)
+        case .stop:
+            spinner.stopAnimation(nil)
+        case .none:
+            break
+        }
+        switch state {
         case .repairing:
             item.button?.image = grayImg
         case .disconnected:
             item.button?.image = grayImg
         case .connecting:
-            connectStart = Date(); spinStep = 0; startSpin()
+            item.button?.image = nil
         case .disconnecting:
             item.button?.image = grayImg
         case .connected:
-            do {
-                guard let current = try vpnctl.network() else {
-                    beginDisconnect(after: .errNetworkChanged)
-                    return
-                }
-                helperMissingConfigFields = []
-                connectionNetworkFingerprint = current
-            } catch let failure as VpnctlClientFailure {
-                if case let .configError(missingFields: missingFields) = failure {
-                    enterUnconfigured(missingFields: missingFields)
-                } else {
-                    beginDisconnect(after: .errNetworkChanged)
-                }
-                return
-            } catch {
-                beginDisconnect(after: .errNetworkChanged)
-                return
-            }
             item.button?.image = colorImg
         case .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged:
             item.button?.image = redImg
         }
         updatePrimaryMenu()
         reschedule()
+    }
+
+    func interpret(_ effects: [TunnelReducer.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .repairTunnel:
+                repairTunnelEffect()
+            case .readConnectionNetwork:
+                reduce(.connectionNetworkRead(readNetwork()))
+            case .startConnect:
+                startConnectionEffect()
+            case let .stopTunnel(after: successState):
+                stopTunnelEffect(after: successState)
+            case .captureFingerprint:
+                reduce(.fingerprintRead(readNetwork()))
+            case let .persistCertificate(certificate):
+                setConfigValue("SERVERCERT", certificate)
+            case .refreshStatus:
+                tick()
+            case let .showSettings(focusPin):
+                showConfig(focusPin: focusPin)
+            case let .recordMissingConfigFields(missingFields):
+                helperMissingConfigFields = missingFields
+                updatePrimaryMenu()
+            case .clearMissingConfigFields:
+                helperMissingConfigFields = []
+                updatePrimaryMenu()
+            case .alert(.openconnectMissing):
+                alert("缺少依赖", "重新运行 LiteOC 安装器(.pkg)以补齐内置 openconnect。")
+            }
+        }
+    }
+
+    func readNetwork() -> TunnelReducer.NetworkRead {
+        do {
+            guard let current = try vpnctl.network() else { return .unavailable }
+            return .available(current)
+        } catch let failure as VpnctlClientFailure {
+            if case let .configError(missingFields: missingFields) = failure {
+                return .configError(missingFields: missingFields)
+            }
+            return .failed
+        } catch {
+            return .failed
+        }
     }
 
     func performPrimaryMenuAction() {
@@ -673,58 +663,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func doConnect() {
         reloadConfig()
-        if case .connecting = state { return }      // 已在连接, 忽略重复点击
-        guard profileIsConfigured(loadConfig()) else { enter(.disconnected); showConfig(); return }
-        guard let pin = pinGet(service) else { enter(.disconnected); showConfig(focusPin: true); return }
-        do {
-            guard let current = try vpnctl.network() else {
-                enter(.errNetworkChanged)
-                return
-            }
-            helperMissingConfigFields = []
-            connectionNetworkFingerprint = current
-        } catch let failure as VpnctlClientFailure {
-            if case let .configError(missingFields: missingFields) = failure {
-                enterUnconfigured(missingFields: missingFields)
-            } else {
-                enter(.errRoute)
-            }
-            return
-        } catch {
-            enter(.errRoute)
+        let configured = profileIsConfigured(loadConfig())
+        let pinAvailable = configured && rawPin(service) != nil
+        reduce(.connectRequested(profileConfigured: configured, pinAvailable: pinAvailable))
+    }
+
+    func startConnectionEffect() {
+        guard let pin = rawPin(service) else {
+            reduce(.startCompleted(.noPin))
             return
         }
-        enter(.connecting)
         vpnQueue.async {
             let result: Result<StartResult, VpnctlClientFailure>
             do {
-                let value = try self.vpnctl.start(pin: pin)
-                if case let .started(discoveredCert: discoveredCert?) = value {
-                    setConfigValue("SERVERCERT", discoveredCert)   // TOFU 回写仍由 App 用户态负责
-                }
-                result = .success(value)
+                result = .success(try self.vpnctl.start(pin: pin))
             } catch let failure as VpnctlClientFailure {
                 result = .failure(failure)
             } catch {
                 result = .failure(.spawnFailed)
             }
             DispatchQueue.main.async {
-                if self.state != .connecting { return }   // 已离开 connecting (用户已断开等), 丢弃迟到的结果
                 switch result {
-                case .success(.authenticationFailed): self.enter(.errAuth)
-                case .success(.certificateDiscoveryFailed): self.enter(.errCert)
-                case .success(.openconnectMissing):
-                    self.enter(.disconnected)
-                    self.alert("缺少依赖", "重新运行 LiteOC 安装器(.pkg)以补齐内置 openconnect。")
-                case .success(.noPin): self.enter(.disconnected)
-                case .success(.routeFailure): self.enter(.errRoute)
-                case let .success(.configError(missingFields: missingFields)):
-                    self.enterUnconfigured(missingFields: missingFields)
-                case .success(.started), .success(.alreadyRunning), .success(.stopTimeout):
-                    self.helperMissingConfigFields = []
-                    break   // 等 tick 检测 connected
+                case let .success(value):
+                    self.reduce(.startCompleted(value))
                 case .failure:
-                    break   // 保持连接中,由既有超时规则收敛
+                    self.reduce(.startFailed)
                 }
             }
         }
@@ -733,8 +696,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         beginDisconnect(after: .disconnected)
     }
     func beginDisconnect(after successState: TunnelState) {
-        if state == .disconnecting { return }
-        enter(.disconnecting)
+        reduce(.disconnectRequested(after: successState))
+    }
+
+    func stopTunnelEffect(after successState: TunnelState) {
         vpnQueue.async {
             let result: Result<StopResult, VpnctlClientFailure>
             do {
@@ -745,17 +710,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 result = .failure(.spawnFailed)
             }
             DispatchQueue.main.async {
-                self.connectionNetworkFingerprint = nil
                 switch result {
-                case .success(.stopped):
-                    self.helperMissingConfigFields = []
-                    self.enter(successState)
-                case .success(.stopTimeout):
-                    self.enter(.errStop)
-                case .success(.routeFailure), .failure:
-                    self.enter(.errRoute)
-                case let .success(.configError(missingFields: missingFields)):
-                    self.enterUnconfigured(missingFields: missingFields)
+                case let .success(value):
+                    self.reduce(.stopCompleted(value, after: successState))
+                case .failure:
+                    self.reduce(.stopFailed)
                 }
             }
         }
@@ -814,8 +773,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory)
-app.run()
+@main
+enum LiteOCApplication {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        app.run()
+    }
+}

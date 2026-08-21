@@ -11,6 +11,15 @@ private func check(_ description: String, _ actual: MenuPresentation, _ expected
     print("  ok   \(description)")
 }
 
+private func checkValue<T: Equatable>(_ description: String, _ actual: T, _ expected: T) {
+    guard actual == expected else {
+        fputs("FAIL \(description)\n  expected: \(expected)\n  actual:   \(actual)\n", stderr)
+        exit(1)
+    }
+    passed += 1
+    print("  ok   \(description)")
+}
+
 private func expected(
     _ title: String,
     _ subtitle: String,
@@ -97,5 +106,37 @@ guard profileIsConfigured(configured), !profileIsConfigured(placeholderHost), !p
 }
 passed += 1
 print("  ok   profile configuration detection")
+
+checkValue(
+    "helper config-error overrides a locally complete profile",
+    effectiveProfileIsConfigured(configured, missingConfigFields: ["GROUP"]),
+    false
+)
+
+checkValue(
+    "entering Connecting starts the native spinner once",
+    spinnerAnimationAction(from: .disconnected, to: .connecting),
+    .start
+)
+checkValue(
+    "remaining Connecting leaves native animation uninterrupted",
+    spinnerAnimationAction(from: .connecting, to: .connecting),
+    .none
+)
+checkValue(
+    "leaving Connecting for Connected stops the native spinner",
+    spinnerAnimationAction(from: .connecting, to: .connected),
+    .stop
+)
+checkValue(
+    "leaving Connecting for an error stops the native spinner",
+    spinnerAnimationAction(from: .connecting, to: .errTimeout),
+    .stop
+)
+checkValue(
+    "non-Connecting transitions do not touch spinner animation",
+    spinnerAnimationAction(from: .connected, to: .disconnected),
+    .none
+)
 
 print("\n\(passed) passed")

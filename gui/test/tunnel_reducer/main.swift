@@ -92,7 +92,7 @@ private let matrix: [MatrixRow] = [
             expected(.repairing, 0, nil, nil),
             expected(.repairing, 0, nil, nil),
             expected(.repairing, 0, nil, nil),
-            expected(.disconnected, 0, nil, nil)
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -104,7 +104,7 @@ private let matrix: [MatrixRow] = [
             expected(.errRoute, 0, nil, nil),
             expected(.connecting, 0, now, nil),
             expected(.connected, 0, nil, nil, [.captureFingerprint]),
-            expected(.disconnected, 0, nil, nil)
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -116,7 +116,7 @@ private let matrix: [MatrixRow] = [
             expected(.errRoute, 0, connectStart, baseline),
             expected(.connecting, 0, connectStart, baseline),
             expected(.connected, 0, connectStart, baseline, [.captureFingerprint]),
-            expected(.disconnected, 0, connectStart, baseline)
+            expected(.disconnected, 0, connectStart, baseline, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -128,7 +128,7 @@ private let matrix: [MatrixRow] = [
             expected(.disconnecting, 0, nil, nil),
             expected(.disconnecting, 0, nil, nil),
             expected(.disconnecting, 0, nil, nil),
-            expected(.disconnected, 0, nil, nil)
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -140,7 +140,7 @@ private let matrix: [MatrixRow] = [
             expected(.errRoute, 0, connectStart, baseline),
             expected(.connected, 0, connectStart, baseline),
             expected(.connected, 0, connectStart, baseline),
-            expected(.disconnected, 0, connectStart, baseline)
+            expected(.disconnected, 0, connectStart, baseline, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -152,7 +152,7 @@ private let matrix: [MatrixRow] = [
             expected(.errTimeout, 0, nil, nil),
             expected(.errTimeout, 0, nil, nil),
             expected(.errTimeout, 0, nil, nil),
-            expected(.disconnected, 0, nil, nil)
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -164,7 +164,7 @@ private let matrix: [MatrixRow] = [
             expected(.errAuth, 0, nil, nil),
             expected(.errAuth, 0, nil, nil),
             expected(.errAuth, 0, nil, nil),
-            expected(.disconnected, 0, nil, nil)
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -176,7 +176,7 @@ private let matrix: [MatrixRow] = [
             expected(.errCert, 0, nil, nil),
             expected(.errCert, 0, nil, nil),
             expected(.errCert, 0, nil, nil),
-            expected(.disconnected, 0, nil, nil)
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -188,7 +188,7 @@ private let matrix: [MatrixRow] = [
             expected(.errDropped, 0, nil, nil),
             expected(.errDropped, 0, nil, nil),
             expected(.errDropped, 0, nil, nil),
-            expected(.disconnected, 0, nil, nil)
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -200,7 +200,7 @@ private let matrix: [MatrixRow] = [
             expected(.errRoute, 0, nil, nil),
             expected(.errRoute, 0, nil, nil),
             expected(.errRoute, 0, nil, nil),
-            expected(.disconnected, 0, nil, nil)
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -212,7 +212,7 @@ private let matrix: [MatrixRow] = [
             expected(.errStop, 0, nil, nil),
             expected(.errStop, 0, nil, nil),
             expected(.errStop, 0, nil, nil),
-            expected(.disconnected, 0, nil, nil)
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     ),
     MatrixRow(
@@ -224,7 +224,7 @@ private let matrix: [MatrixRow] = [
             expected(.errNetworkChanged, 0, nil, nil),
             expected(.errNetworkChanged, 0, nil, nil),
             expected(.errNetworkChanged, 0, nil, nil),
-            expected(.disconnected, 0, nil, nil)
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
     )
 ]
@@ -249,7 +249,7 @@ for row in matrix {
 
 private func reduce(
     _ state: TunnelReducer.Context,
-    _ snapshot: StatusSnapshot,
+    _ snapshot: StatusSnapshot?,
     network: Fingerprint? = baseline,
     at now: Date = now,
     thresholds: TunnelReducer.Thresholds = thresholds
@@ -369,13 +369,13 @@ check(
 let configError = StatusSnapshot.configError(missingFields: ["USER"])
 let unconfigured = TunnelReducer.Result(
     state: context(.disconnected, connectStart: connectStart, fingerprint: baseline),
-    effects: []
+    effects: [.recordMissingConfigFields(["USER"])]
 )
 check("config-error maps active state to unconfigured", unconfigured, reduce(context(.connecting), configError), boundary: true)
 
 let configWinsOverMissingNetwork = TunnelReducer.Result(
     state: context(.disconnected, connectStart: connectStart, fingerprint: baseline),
-    effects: []
+    effects: [.recordMissingConfigFields(["USER"])]
 )
 check(
     "config-error remains unconfigured when the network is unavailable",
@@ -395,6 +395,36 @@ check(
     boundary: true
 )
 
+let unavailableConnected = TunnelReducer.Result(
+    state: context(.connected, downStreak: 0),
+    effects: []
+)
+check(
+    "status read failure resets connected debounce without migrating",
+    unavailableConnected,
+    reduce(context(.connected, downStreak: 1), nil),
+    boundary: true
+)
+
+let unavailableTimeout = TunnelReducer.Result(
+    state: context(.disconnecting, connectStart: Date(timeIntervalSince1970: 969)),
+    effects: [.stopTunnel(after: .errTimeout)]
+)
+check(
+    "status read failure still observes connecting timeout",
+    unavailableTimeout,
+    reduce(context(.connecting, connectStart: Date(timeIntervalSince1970: 969)), nil),
+    boundary: true
+)
+
+let unavailableDisconnected = context(.disconnected)
+check(
+    "status read failure leaves inactive phases unchanged",
+    TunnelReducer.Result(state: unavailableDisconnected, effects: []),
+    reduce(unavailableDisconnected, nil),
+    boundary: true
+)
+
 let typedVocabulary: [TunnelReducer.Effect] = [
     .startConnect,
     .stopTunnel(after: .disconnected),
@@ -404,7 +434,7 @@ let typedVocabulary: [TunnelReducer.Effect] = [
 check("effect vocabulary is typed and equatable", 4, typedVocabulary.count, boundary: true)
 
 check("all 72 matrix cells executed", 72, matrixAssertions)
-check("all 18 boundary assertions executed", 18, boundaryAssertions)
+check("all 21 boundary assertions executed", 21, boundaryAssertions)
 
 if failures > 0 {
     print("\n\(failures) failed")

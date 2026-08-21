@@ -44,6 +44,5 @@ func renderDot(_ hex: UInt32, _ S: CGFloat, _ outFile: String) {
 
 renderSymbol("lock.shield", 0xFFFFFF, 64, "menubar_gray.png")   // 未连接: 盾 (template)
 renderDot(0x22C55E, 64, "menubar_color.png")                    // 已连接: 绿灯
-renderSymbol("arrow.triangle.2.circlepath", 0xFFFFFF, 64, "menubar_spinner.png")  // 连接中: 旋转 spinner (template)
 renderDot(0xEF4444, 64, "menubar_red.png")                      // 异常: 红灯
-print("wrote menubar_gray (shield) + menubar_color (green) + menubar_spinner (loading) + menubar_red (red)")
+print("wrote menubar_gray (shield) + menubar_color (green) + menubar_red (red)")

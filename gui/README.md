@@ -38,6 +38,9 @@ sh test/app_config_test.sh
 sh test/config_fixture_test.sh
 sh test/menu_presentation_test.sh
 sh test/tunnel_reducer_test.sh
+sh test/tunnel_events_test.sh
+sh test/app_architecture_test.sh
+sh test/app_bundle_resources_test.sh
 sh test/vpnctl_status_test.sh
 sh test/vpnctl_route_test.sh
 ```
