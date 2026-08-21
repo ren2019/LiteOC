@@ -73,8 +73,8 @@ LiteOC(菜单栏 App)+ Root Helper 现在把**所有连接参数写死在代码�
   GROUP="用户组"
   SERVERCERT="pin-sha256:…"      # 可选;空则首次自动锁定(D9)
   KEYCHAIN_SERVICE="LiteOC"
-  KEYCHAIN_ACCOUNT="pin"
   ```
+  (KEYCHAIN_ACCOUNT 曾在此 schema 中;2026-08-21 决议移除——App 只写不读,唯一消费者 connect.sh 收缩后无人使用。account 固定 `"pin"` 写死在代码。)
   解析规则:按"第一个 `=` 之后全部"取值(证书指纹含 `/`、结尾 `==` 不被截断),去首尾引号,`#` 为注释。
 - **状态/IP 探测自动**(D3):连/断 = `pgrep openconnect`;分到的 IP = 从 openconnect 自身输出的 `Configured as <ip>` 取。移除"网段正则"配置项。
 - **openconnect 路径写死 + 安装器统一装**(D4,见 ADR-0001):Root Helper 用写死的固定路径清单找 openconnect;安装器负责 `brew install openconnect`(用户级),装前校验存在。

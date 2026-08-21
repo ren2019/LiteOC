@@ -11,7 +11,7 @@
 |---|---|
 | Gateway / User / Group | **配置** |
 | Cert Pin (SERVERCERT) | **配置,可选**(空则首次自动锁定,见 D9) |
-| Keychain Key (service/account) | **配置** |
+| Keychain Key service | **配置**(account 固定 `"pin"`,写死在代码) |
 | openconnect 二进制路径 | **写死**(安全边界,见 ADR-0001) |
 | App 名 / vpnctl 路径 / PIDFILE / 路由所有权记录 / 旧迁移名 | **写死** |
 
@@ -19,7 +19,7 @@
 
 ## D3 — 状态 / IP 探测:自动 ✅
 - **是否连上**:`pgrep openconnect`。
-- **分到的内网 IP**:优先从 openconnect 日志(`/tmp/liteoc-openconnect.log`)的 `Configured as <ip>` 取;取不到则 `ifconfig` 按 `VPN_IP_PATTERN`(可选)兜底。
+- **分到的内网 IP**:从 openconnect 日志(`/tmp/liteoc-openconnect.log`)的 `Configured as <ip>` 取。
 - **退化状态**:OpenConnect 不在运行、但当前 Profile 的网关 IP 仍有指向非当前默认网关/接口的 `HOST,STATIC` 路由时,`status` 返回 `route-stale`。
 - **路由自愈**:App 启动和 `start` 前执行精确检查;`stop` 等待进程退出后验证并清理本次会话的网关主机路由。成功连接只把本次新增的网关 IP 记入 root 所有的 `/var/run/liteoc-openconnect.routes`,供异常退出恢复;不记录认证信息。只处理当前 Profile 解析出的 IPv4,不做广泛路由表清理。
 - 网段换 / 动态分配都不用改代码(主路径靠 openconnect 自身输出)。
@@ -56,8 +56,6 @@ USER="your-username"
 GROUP="your-group"
 SERVERCERT=""                    # 留空 = 首次连接自动获取(TOFU)
 KEYCHAIN_SERVICE="LiteOC"
-KEYCHAIN_ACCOUNT="pin"
-VPN_IP_PATTERN=""                # 可选; 留空走默认宽匹配
 ```
 > 不含:PIN(钥匙串)、openconnect 路径(写死)、OTP(不要)。此文件无机密,无需 chmod 600。
 
