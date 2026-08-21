@@ -1,32 +1,71 @@
 #!/usr/bin/env bash
-# LiteOC CLI 连接 (GUI 的命令行兜底)
-# 连接参数从本地配置读: ~/Library/Application Support/LiteOC/config
-# PIN 从钥匙串或终端隐藏输入; 密码 = 纯 PIN
+# LiteOC CLI 兜底: 所有 VPN 操作均委托给 Root Helper(vpnctl)。
 set -euo pipefail
 
 CONF="$HOME/Library/Application Support/LiteOC/config"
-[ -f "$CONF" ] || { echo "❌ 配置不存在: $CONF"; echo "   先跑菜单栏 App(会生成模板)或 GUI 的 setup-root.sh"; exit 1; }
-# shellcheck disable=SC1090
-source "$CONF"
-
-: "${HOST:?配置缺 HOST}"
-: "${USER:?配置缺 USER}"
-: "${GROUP:?配置缺 GROUP}"
-: "${SERVERCERT:?配置缺 SERVERCERT}"
-
-# PIN: 优先钥匙串 (service=KEYCHAIN_SERVICE), 否则终端隐藏输入
-SVC="${KEYCHAIN_SERVICE:-LiteOC}"
-PIN="$(security find-generic-password -s "$SVC" -a "${KEYCHAIN_ACCOUNT:-pin}" -w 2>/dev/null || true)"
-if [ -z "$PIN" ]; then
-  IFS= read -s -p "PIN 码 (隐藏输入, 不回显): " PIN; echo
+VPNCTL="/usr/local/sbin/vpnctl"
+if [ "${LITEOC_TESTING:-0}" = 1 ] && [ "$(/usr/bin/id -u)" -ne 0 ]; then
+  VPNCTL="${LITEOC_VPNCTL:-$VPNCTL}"
 fi
-[ -n "$PIN" ] || { echo "❌ PIN 为空"; exit 2; }
 
-BIN=""
-for p in /usr/local/libexec/liteoc/openconnect /opt/homebrew/bin/openconnect /usr/local/bin/openconnect; do [ -x "$p" ] && BIN="$p" && break; done
-[ -n "$BIN" ] || { echo "❌ 未找到 openconnect (重新运行 LiteOC 安装器, 或 brew install openconnect)"; exit 3; }
+[ -x "$VPNCTL" ] || {
+  echo "❌ Root Helper 未安装或不可执行: $VPNCTL" >&2
+  echo "   请重新运行 LiteOC 安装器(.pkg),或在源码目录运行: cd gui && sudo sh setup-root.sh" >&2
+  exit 3
+}
 
-echo "→ 连接 https://$HOST (user=$USER, group=$GROUP) …  Ctrl-C 断开"
-# stdin 顺序: 密码(第1行) + group(第2行)
-printf '%s\n%s\n' "$PIN" "$GROUP" | sudo "$BIN" \
-  --user="$USER" --passwd-on-stdin --servercert="$SERVERCERT" "https://$HOST"
+case "${1:-connect}" in
+  disconnect)
+    sudo "$VPNCTL" stop "$CONF"
+    exit $?
+    ;;
+  status)
+    sudo "$VPNCTL" status "$CONF"
+    exit $?
+    ;;
+  connect) ;;
+  *)
+    echo "用法: $0 [connect|disconnect|status]" >&2
+    exit 64
+    ;;
+esac
+
+PIN=""
+IFS= read -r -s -p "PIN 码 (隐藏输入, 不回显): " PIN || true
+echo >&2
+[ -n "$PIN" ] || { echo "❌ PIN 为空" >&2; exit 2; }
+
+CLEANUP_STATE="idle"
+cleanup() {
+  local stop_rc
+  trap '' INT HUP TERM
+  case "$CLEANUP_STATE" in
+    cleaning|done) return 0 ;;
+  esac
+
+  CLEANUP_STATE="cleaning"
+  set +e
+  sudo "$VPNCTL" stop "$CONF"
+  stop_rc=$?
+  set -e
+  CLEANUP_STATE="done"
+  return "$stop_rc"
+}
+
+handle_signal() {
+  local signal_rc="$1"
+  trap '' INT HUP TERM
+  cleanup || true
+  exit "$signal_rc"
+}
+
+trap 'handle_signal 130' INT
+trap 'handle_signal 129' HUP
+trap 'handle_signal 143' TERM
+
+printf '%s\n' "$PIN" | sudo "$VPNCTL" start "$CONF"
+
+echo "→ 已交给 Root Helper 连接; 按 Ctrl-C 或 Ctrl-D 断开" >&2
+while IFS= read -r _; do :; done
+
+cleanup

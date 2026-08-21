@@ -29,6 +29,7 @@ jobs:
 
       - name: Test menu and vpnctl contracts
         run: |
+          sh gui/test/connect_cli_test.sh
           sh gui/test/menu_presentation_test.sh
           sh gui/test/vpnctl_locale_test.sh
           sh gui/test/vpnctl_status_test.sh
