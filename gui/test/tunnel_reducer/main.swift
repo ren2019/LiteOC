@@ -482,7 +482,8 @@ for row in transitionTable {
 }
 check("networkTransition table has 7 rows", 7, transitionTable.count)
 
-// 重连编排边界 (issue #24 / ADR-0003): 用户会话判变转重连,启动残留维持红,等待不计数,超时计入配额。
+// 重连编排边界 (issue #24/#25 / ADR-0003): 用户会话判变转重连——connecting 在飞尝试计入配额,
+// connected 后判变计数清零;启动残留维持红,等待不计数,超时计入配额。
 let userSession = TunnelReducer.Context(
     phase: .connected, downStreak: 0, networkTransitionStreak: 0,
     connectStart: connectStart, connectionNetworkFingerprint: baseline,
@@ -493,7 +494,7 @@ check(
     TunnelReducer.Result(
         state: TunnelReducer.Context(
             phase: .disconnecting, downStreak: 0, networkTransitionStreak: 0,
-            connectStart: connectStart, connectionNetworkFingerprint: baseline,
+            connectStart: nil, connectionNetworkFingerprint: baseline,
             reconnectAttempts: 0, userInitiated: true, reconnectSession: false
         ),
         effects: [.stopTunnel(after: .reconnecting)]
@@ -506,7 +507,7 @@ check(
     TunnelReducer.Result(
         state: TunnelReducer.Context(
             phase: .disconnecting, downStreak: 0, networkTransitionStreak: 0,
-            connectStart: connectStart, connectionNetworkFingerprint: baseline,
+            connectStart: nil, connectionNetworkFingerprint: baseline,
             reconnectAttempts: 0, userInitiated: true, reconnectSession: false
         ),
         effects: [.stopTunnel(after: .reconnecting)]
@@ -518,6 +519,66 @@ check(
             reconnectAttempts: 0, userInitiated: true, reconnectSession: false
         ),
         .connected(ip: "10.8.0.42"), network: nil
+    ),
+    boundary: true
+)
+check(
+    "changed fingerprint while connecting in a user session counts the abandoned attempt",
+    TunnelReducer.Result(
+        state: TunnelReducer.Context(
+            phase: .disconnecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: nil, connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 1, userInitiated: true, reconnectSession: false
+        ),
+        effects: [.stopTunnel(after: .reconnecting)]
+    ),
+    reduce(
+        TunnelReducer.Context(
+            phase: .connecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: connectStart, connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 0, userInitiated: true, reconnectSession: false
+        ),
+        .connecting, network: changedNetwork
+    ),
+    boundary: true
+)
+check(
+    "debounced unavailability while connecting in a user session counts the abandoned attempt",
+    TunnelReducer.Result(
+        state: TunnelReducer.Context(
+            phase: .disconnecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: nil, connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 1, userInitiated: true, reconnectSession: false
+        ),
+        effects: [.stopTunnel(after: .reconnecting)]
+    ),
+    reduce(
+        TunnelReducer.Context(
+            phase: .connecting, downStreak: 0, networkTransitionStreak: 1,
+            connectStart: connectStart, connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 0, userInitiated: true, reconnectSession: false
+        ),
+        .connecting, network: nil
+    ),
+    boundary: true
+)
+check(
+    "network change while connecting inside a reconnect session keeps counting attempts",
+    TunnelReducer.Result(
+        state: TunnelReducer.Context(
+            phase: .disconnecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: nil, connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 2, userInitiated: true, reconnectSession: true
+        ),
+        effects: [.stopTunnel(after: .reconnecting)]
+    ),
+    reduce(
+        TunnelReducer.Context(
+            phase: .connecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: connectStart, connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 1, userInitiated: true, reconnectSession: true
+        ),
+        .connecting, network: changedNetwork
     ),
     boundary: true
 )
@@ -658,7 +719,7 @@ let typedVocabulary: [TunnelReducer.Effect] = [
 check("effect vocabulary is typed and equatable", 4, typedVocabulary.count, boundary: true)
 
 check("all 84 matrix cells executed", 84, matrixAssertions)
-check("all 40 boundary assertions executed", 40, boundaryAssertions)
+check("all 43 boundary assertions executed", 43, boundaryAssertions)
 
 if failures > 0 {
     print("\n\(failures) failed")

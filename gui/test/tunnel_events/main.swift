@@ -287,7 +287,8 @@ check(
     reduce(awaitingCapture, .fingerprintRead(.configError(missingFields: ["USER"])))
 )
 
-// 重连编排 (issue #24 / ADR-0003): 防抖判变转 reconnecting,等待不计数,配额 3 次升红,auth 立停,取消走 disconnect。
+// 重连编排 (issue #24/#25 / ADR-0003): 防抖判变转 reconnecting——connecting 在飞尝试计入配额,
+// 等待不计数,配额 3 次升红,auth 立停,取消走 disconnect。
 let connectedSession = context(.connected, connectStart: now, fingerprint: fingerprint, userInitiated: true)
 check(
     "debounced change in a user session tears down into reconnecting",
@@ -303,6 +304,15 @@ check(
     "debounced unavailability in a user session tears down into reconnecting",
     result(.disconnecting, fingerprint: fingerprint, userInitiated: true, effects: [.stopTunnel(after: .reconnecting)]),
     reduce(context(.connected, connectStart: now, fingerprint: fingerprint, networkTransitionStreak: 1, userInitiated: true), .fingerprintRead(.unavailable))
+)
+// connecting 途中判变 (issue #25): 与快照入口共用同一 teardown,在飞连接尝试计为第 1 次失败。
+check(
+    "change while connecting in a user session counts the abandoned attempt",
+    result(
+        .disconnecting, fingerprint: fingerprint, reconnectAttempts: 1, userInitiated: true,
+        effects: [.stopTunnel(after: .reconnecting)]
+    ),
+    reduce(context(.connecting, connectStart: now, fingerprint: fingerprint, userInitiated: true), .fingerprintRead(.available(changedFingerprint)))
 )
 
 let reconnectingSession = context(.reconnecting, fingerprint: nil, userInitiated: true, reconnectSession: true)
@@ -366,11 +376,11 @@ check(
     reduce(context(.connecting, connectStart: now, fingerprint: fingerprint, userInitiated: true), .startFailed)
 )
 
-if assertions == 59 {
+if assertions == 60 {
     print("  ok   all event assertions executed")
 } else {
     failures += 1
-    print("  FAIL all event assertions executed\n       expected: 59\n       actual:   \(assertions)")
+    print("  FAIL all event assertions executed\n       expected: 60\n       actual:   \(assertions)")
 }
 
 if failures > 0 {

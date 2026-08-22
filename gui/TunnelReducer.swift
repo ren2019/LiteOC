@@ -70,6 +70,41 @@ enum TunnelReducer {
         )
     }
 
+    // 判变拆隧道的共享 teardown,快照/事件两入口共用 (issue #25 / ADR-0003):
+    // 用户会话转 Reconnecting——connecting 途中判变时在飞的连接尝试计为一次失败
+    // ("初次失败计入 3 次配额"),connected 后判变无在飞尝试、计数清零 (issue #24);
+    // 启动残留 (非用户会话) 维持旧终态红。
+    static func networkChangeTeardown(state: Context) -> Result {
+        guard state.userInitiated else {
+            return Result(
+                state: Context(
+                    phase: .disconnecting,
+                    downStreak: 0,
+                    networkTransitionStreak: 0,
+                    connectStart: state.connectStart,
+                    connectionNetworkFingerprint: state.connectionNetworkFingerprint,
+                    reconnectAttempts: state.reconnectAttempts,
+                    userInitiated: state.userInitiated,
+                    reconnectSession: state.reconnectSession
+                ),
+                effects: [.stopTunnel(after: .errNetworkChanged)]
+            )
+        }
+        return Result(
+            state: Context(
+                phase: .disconnecting,
+                downStreak: 0,
+                networkTransitionStreak: 0,
+                connectStart: nil,
+                connectionNetworkFingerprint: state.connectionNetworkFingerprint,
+                reconnectAttempts: state.phase == .connecting ? state.reconnectAttempts + 1 : 0,
+                userInitiated: state.userInitiated,
+                reconnectSession: state.reconnectSession
+            ),
+            effects: [.stopTunnel(after: .reconnecting)]
+        )
+    }
+
     enum Event: Equatable {
         case launch(profileConfigured: Bool)
         case repairCompleted(RepairResult)
@@ -134,18 +169,9 @@ enum TunnelReducer {
             )
         }
 
-        // 确认网络变化: 用户会话转入自动重连,启动残留维持旧终态红 (issue #24 / ADR-0003)。
+        // 确认网络变化: 两入口共用同一份判变 teardown (issue #25)。
         func networkChange() -> Result {
-            guard state.userInitiated else {
-                return Result(
-                    state: context(.disconnecting),
-                    effects: [.stopTunnel(after: .errNetworkChanged)]
-                )
-            }
-            return Result(
-                state: context(.disconnecting, connectStart: nil),
-                effects: [.stopTunnel(after: .reconnecting)]
-            )
+            networkChangeTeardown(state: state)
         }
 
         switch event {
@@ -388,12 +414,9 @@ enum TunnelReducer {
                 limit: thresholds.networkTransitionLimit
             ) {
             case .changed:
-                // 用户会话转自动重连(计数清零);启动残留维持旧终态红 (issue #24)。
+                // 用户会话转自动重连;启动残留维持旧终态红 (issue #24 / #25)。
                 if state.userInitiated {
-                    return Result(
-                        state: context(.disconnecting, reconnectAttempts: 0),
-                        effects: [.stopTunnel(after: .reconnecting)]
-                    )
+                    return networkChangeTeardown(state: state)
                 }
                 return stop(after: .errNetworkChanged)
             case let .transitioning(nextStreak):
