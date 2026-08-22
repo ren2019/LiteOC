@@ -45,6 +45,9 @@ private struct MatrixExpected {
     let networkTransitionStreak: Int
     let connectStart: Date?
     let fingerprint: Fingerprint?
+    let reconnectAttempts: Int
+    let userInitiated: Bool
+    let reconnectSession: Bool
     let effects: [TunnelReducer.Effect]
 
     var result: TunnelReducer.Result {
@@ -54,7 +57,10 @@ private struct MatrixExpected {
                 downStreak: downStreak,
                 networkTransitionStreak: networkTransitionStreak,
                 connectStart: connectStart,
-                connectionNetworkFingerprint: fingerprint
+                connectionNetworkFingerprint: fingerprint,
+                reconnectAttempts: reconnectAttempts,
+                userInitiated: userInitiated,
+                reconnectSession: reconnectSession
             ),
             effects: effects
         )
@@ -67,7 +73,10 @@ private func expected(
     _ connectStart: Date?,
     _ fingerprint: Fingerprint?,
     _ effects: [TunnelReducer.Effect] = [],
-    networkTransitionStreak: Int = 0
+    networkTransitionStreak: Int = 0,
+    reconnectAttempts: Int = 0,
+    userInitiated: Bool = false,
+    reconnectSession: Bool = false
 ) -> MatrixExpected {
     MatrixExpected(
         phase: phase,
@@ -75,6 +84,9 @@ private func expected(
         networkTransitionStreak: networkTransitionStreak,
         connectStart: connectStart,
         fingerprint: fingerprint,
+        reconnectAttempts: reconnectAttempts,
+        userInitiated: userInitiated,
+        reconnectSession: reconnectSession,
         effects: effects
     )
 }
@@ -232,11 +244,36 @@ private let matrix: [MatrixRow] = [
             expected(.errNetworkChanged, 0, nil, nil),
             expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
         ]
+    ),
+    // 重连等待 (issue #24 / ADR-0003): 有基线才监测;每拍重读网络,等待不计数,不红。
+    MatrixRow(
+        name: "reconnecting",
+        input: .init(phase: .reconnecting, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil, reconnectAttempts: 1, userInitiated: true, reconnectSession: true),
+        expected: [
+            expected(.reconnecting, 0, nil, nil, [.readConnectionNetwork], reconnectAttempts: 1, userInitiated: true, reconnectSession: true),
+            expected(.reconnecting, 0, nil, nil, [.readConnectionNetwork], reconnectAttempts: 1, userInitiated: true, reconnectSession: true),
+            expected(.reconnecting, 0, nil, nil, [.readConnectionNetwork], reconnectAttempts: 1, userInitiated: true, reconnectSession: true),
+            expected(.reconnecting, 0, nil, nil, [.readConnectionNetwork], reconnectAttempts: 1, userInitiated: true, reconnectSession: true),
+            expected(.reconnecting, 0, nil, nil, [.readConnectionNetwork], reconnectAttempts: 1, userInitiated: true, reconnectSession: true),
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])], reconnectAttempts: 1, userInitiated: true, reconnectSession: true)
+        ]
+    ),
+    MatrixRow(
+        name: "err-reconnect-failed",
+        input: .init(phase: .errReconnectFailed, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        expected: [
+            expected(.errReconnectFailed, 0, nil, nil),
+            expected(.errReconnectFailed, 0, nil, nil),
+            expected(.errReconnectFailed, 0, nil, nil),
+            expected(.errReconnectFailed, 0, nil, nil),
+            expected(.errReconnectFailed, 0, nil, nil),
+            expected(.disconnected, 0, nil, nil, [.recordMissingConfigFields(["HOST", "GROUP"])])
+        ]
     )
 ]
 
-print("== TunnelReducer 12 x 6 transition matrix ==")
-check("matrix has 12 phases", 12, matrix.count)
+print("== TunnelReducer 14 x 6 transition matrix ==")
+check("matrix has 14 phases", 14, matrix.count)
 check("matrix has 6 snapshots per phase", true, matrix.allSatisfy { $0.expected.count == 6 })
 
 for row in matrix {
@@ -445,6 +482,106 @@ for row in transitionTable {
 }
 check("networkTransition table has 7 rows", 7, transitionTable.count)
 
+// 重连编排边界 (issue #24 / ADR-0003): 用户会话判变转重连,启动残留维持红,等待不计数,超时计入配额。
+let userSession = TunnelReducer.Context(
+    phase: .connected, downStreak: 0, networkTransitionStreak: 0,
+    connectStart: connectStart, connectionNetworkFingerprint: baseline,
+    reconnectAttempts: 2, userInitiated: true, reconnectSession: false
+)
+check(
+    "changed fingerprint in a user session tears down into reconnecting",
+    TunnelReducer.Result(
+        state: TunnelReducer.Context(
+            phase: .disconnecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: connectStart, connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 0, userInitiated: true, reconnectSession: false
+        ),
+        effects: [.stopTunnel(after: .reconnecting)]
+    ),
+    reduce(userSession, .connected(ip: "10.8.0.42"), network: changedNetwork),
+    boundary: true
+)
+check(
+    "debounced unavailability in a user session tears down into reconnecting",
+    TunnelReducer.Result(
+        state: TunnelReducer.Context(
+            phase: .disconnecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: connectStart, connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 0, userInitiated: true, reconnectSession: false
+        ),
+        effects: [.stopTunnel(after: .reconnecting)]
+    ),
+    reduce(
+        TunnelReducer.Context(
+            phase: .connected, downStreak: 0, networkTransitionStreak: 1,
+            connectStart: connectStart, connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 0, userInitiated: true, reconnectSession: false
+        ),
+        .connected(ip: "10.8.0.42"), network: nil
+    ),
+    boundary: true
+)
+check(
+    "connecting timeout during a reconnect session counts as a failed attempt",
+    TunnelReducer.Result(
+        state: TunnelReducer.Context(
+            phase: .disconnecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: Date(timeIntervalSince1970: 969.999), connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 3, userInitiated: true, reconnectSession: false
+        ),
+        effects: [.stopTunnel(after: .errReconnectFailed)]
+    ),
+    reduce(
+        TunnelReducer.Context(
+            phase: .connecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: Date(timeIntervalSince1970: 969.999), connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 2, userInitiated: true, reconnectSession: true
+        ),
+        .connecting
+    ),
+    boundary: true
+)
+check(
+    "connecting timeout outside a reconnect session stays a terminal timeout",
+    TunnelReducer.Result(
+        state: TunnelReducer.Context(
+            phase: .disconnecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: Date(timeIntervalSince1970: 969.999), connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 0, userInitiated: true, reconnectSession: false
+        ),
+        effects: [.stopTunnel(after: .errTimeout)]
+    ),
+    reduce(
+        TunnelReducer.Context(
+            phase: .connecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: Date(timeIntervalSince1970: 969.999), connectionNetworkFingerprint: baseline,
+            reconnectAttempts: 0, userInitiated: true, reconnectSession: false
+        ),
+        .connecting
+    ),
+    boundary: true
+)
+check(
+    "reconnecting keeps waiting on a nil network without counting",
+    TunnelReducer.Result(
+        state: TunnelReducer.Context(
+            phase: .reconnecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: nil, connectionNetworkFingerprint: nil,
+            reconnectAttempts: 1, userInitiated: true, reconnectSession: true
+        ),
+        effects: [.readConnectionNetwork]
+    ),
+    reduce(
+        TunnelReducer.Context(
+            phase: .reconnecting, downStreak: 0, networkTransitionStreak: 0,
+            connectStart: nil, connectionNetworkFingerprint: nil,
+            reconnectAttempts: 1, userInitiated: true, reconnectSession: true
+        ),
+        .down, network: nil
+    ),
+    boundary: true
+)
+
 let awaitingFingerprint = context(.connected, fingerprint: nil)
 check(
     "missing baseline awaits capture",
@@ -520,11 +657,11 @@ let typedVocabulary: [TunnelReducer.Effect] = [
 ]
 check("effect vocabulary is typed and equatable", 4, typedVocabulary.count, boundary: true)
 
-check("all 72 matrix cells executed", 72, matrixAssertions)
-check("all 35 boundary assertions executed", 35, boundaryAssertions)
+check("all 84 matrix cells executed", 84, matrixAssertions)
+check("all 40 boundary assertions executed", 40, boundaryAssertions)
 
 if failures > 0 {
     print("\n\(failures) failed")
     exit(1)
 }
-print("\n72 matrix cells + \(boundaryAssertions) boundary assertions passed")
+print("\n84 matrix cells + \(boundaryAssertions) boundary assertions passed")

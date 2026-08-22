@@ -45,4 +45,5 @@ func renderDot(_ hex: UInt32, _ S: CGFloat, _ outFile: String) {
 renderSymbol("lock.shield", 0xFFFFFF, 64, "menubar_gray.png")   // 未连接: 盾 (template)
 renderDot(0x22C55E, 64, "menubar_color.png")                    // 已连接: 绿灯
 renderDot(0xEF4444, 64, "menubar_red.png")                      // 异常: 红灯
-print("wrote menubar_gray (shield) + menubar_color (green) + menubar_red (red)")
+renderDot(0xF59E0B, 64, "menubar_yellow.png")                   // 重连中: 黄灯 (闪烁)
+print("wrote menubar_gray (shield) + menubar_color (green) + menubar_red (red) + menubar_yellow (amber)")

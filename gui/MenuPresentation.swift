@@ -1,8 +1,8 @@
 import Foundation
 
 enum TunnelState: Equatable {
-    case repairing, disconnected, connecting, disconnecting, connected
-    case errTimeout, errAuth, errCert, errDropped, errRoute, errStop, errNetworkChanged
+    case repairing, disconnected, connecting, disconnecting, connected, reconnecting
+    case errTimeout, errAuth, errCert, errDropped, errRoute, errStop, errNetworkChanged, errReconnectFailed
 }
 
 enum PrimaryMenuAction: Equatable {
@@ -86,6 +86,11 @@ func menuPresentation(
             title: "正在连接…", subtitle: "", actionTitle: "取消",
             action: .disconnect, tone: .busy
         )
+    case .reconnecting:
+        return MenuPresentation(
+            title: "正在重新连接…", subtitle: "网络已变化", actionTitle: "取消",
+            action: .disconnect, tone: .busy
+        )
     case .disconnecting:
         return MenuPresentation(
             title: "正在断开…", subtitle: "正在清理路由", actionTitle: "",
@@ -119,6 +124,11 @@ func menuPresentation(
     case .errNetworkChanged:
         return MenuPresentation(
             title: "网络已变化", subtitle: "", actionTitle: "重试",
+            action: .connect, tone: .error
+        )
+    case .errReconnectFailed:
+        return MenuPresentation(
+            title: "重连失败", subtitle: "", actionTitle: "重试",
             action: .connect, tone: .error
         )
     case .errRoute:

@@ -28,14 +28,20 @@ private func context(
     downStreak: Int = 0,
     connectStart: Date? = nil,
     fingerprint: Fingerprint? = nil,
-    networkTransitionStreak: Int = 0
+    networkTransitionStreak: Int = 0,
+    reconnectAttempts: Int = 0,
+    userInitiated: Bool = false,
+    reconnectSession: Bool = false
 ) -> TunnelReducer.Context {
     .init(
         phase: phase,
         downStreak: downStreak,
         networkTransitionStreak: networkTransitionStreak,
         connectStart: connectStart,
-        connectionNetworkFingerprint: fingerprint
+        connectionNetworkFingerprint: fingerprint,
+        reconnectAttempts: reconnectAttempts,
+        userInitiated: userInitiated,
+        reconnectSession: reconnectSession
     )
 }
 
@@ -45,6 +51,9 @@ private func result(
     connectStart: Date? = nil,
     fingerprint: Fingerprint? = nil,
     networkTransitionStreak: Int = 0,
+    reconnectAttempts: Int = 0,
+    userInitiated: Bool = false,
+    reconnectSession: Bool = false,
     effects: [TunnelReducer.Effect] = []
 ) -> TunnelReducer.Result {
     .init(
@@ -53,7 +62,10 @@ private func result(
             downStreak: downStreak,
             connectStart: connectStart,
             fingerprint: fingerprint,
-            networkTransitionStreak: networkTransitionStreak
+            networkTransitionStreak: networkTransitionStreak,
+            reconnectAttempts: reconnectAttempts,
+            userInitiated: userInitiated,
+            reconnectSession: reconnectSession
         ),
         effects: effects
     )
@@ -115,8 +127,8 @@ check(
     reduce(context(.errTimeout), .connectRequested(profileConfigured: true, pinAvailable: false))
 )
 check(
-    "valid connect request reads the network",
-    result(.errTimeout, effects: [.readConnectionNetwork]),
+    "valid connect request marks the session user-initiated",
+    result(.errTimeout, userInitiated: true, effects: [.readConnectionNetwork]),
     reduce(context(.errTimeout), .connectRequested(profileConfigured: true, pinAvailable: true))
 )
 let activeConnect = context(.connecting, connectStart: Date(timeIntervalSince1970: 990), fingerprint: fingerprint)
@@ -275,11 +287,90 @@ check(
     reduce(awaitingCapture, .fingerprintRead(.configError(missingFields: ["USER"])))
 )
 
-if assertions == 47 {
+// 重连编排 (issue #24 / ADR-0003): 防抖判变转 reconnecting,等待不计数,配额 3 次升红,auth 立停,取消走 disconnect。
+let connectedSession = context(.connected, connectStart: now, fingerprint: fingerprint, userInitiated: true)
+check(
+    "debounced change in a user session tears down into reconnecting",
+    result(.disconnecting, fingerprint: fingerprint, userInitiated: true, effects: [.stopTunnel(after: .reconnecting)]),
+    reduce(connectedSession, .fingerprintRead(.available(changedFingerprint)))
+)
+check(
+    "debounced change outside a user session keeps the red terminal state",
+    result(.disconnecting, connectStart: now, fingerprint: fingerprint, effects: [.stopTunnel(after: .errNetworkChanged)]),
+    reduce(context(.connected, connectStart: now, fingerprint: fingerprint), .fingerprintRead(.available(changedFingerprint)))
+)
+check(
+    "debounced unavailability in a user session tears down into reconnecting",
+    result(.disconnecting, fingerprint: fingerprint, userInitiated: true, effects: [.stopTunnel(after: .reconnecting)]),
+    reduce(context(.connected, connectStart: now, fingerprint: fingerprint, networkTransitionStreak: 1, userInitiated: true), .fingerprintRead(.unavailable))
+)
+
+let reconnectingSession = context(.reconnecting, fingerprint: nil, userInitiated: true, reconnectSession: true)
+check(
+    "stopped teardown enters the reconnecting session and rereads the network",
+    TunnelReducer.Result(
+        state: context(.reconnecting, fingerprint: nil, userInitiated: true, reconnectSession: true),
+        effects: [.clearMissingConfigFields, .readConnectionNetwork]
+    ),
+    reduce(context(.disconnecting, fingerprint: fingerprint, userInitiated: true), .stopCompleted(.stopped(wasRunning: true), after: .reconnecting))
+)
+check(
+    "unavailable network while reconnecting keeps waiting without counting",
+    TunnelReducer.Result(state: reconnectingSession, effects: []),
+    reduce(reconnectingSession, .connectionNetworkRead(.unavailable))
+)
+check(
+    "available network while reconnecting restarts connecting",
+    result(.connecting, connectStart: now, fingerprint: fingerprint, userInitiated: true, reconnectSession: true, effects: [.startConnect]),
+    reduce(reconnectingSession, .connectionNetworkRead(.available(fingerprint)))
+)
+check(
+    "cancelling a reconnecting session runs the normal disconnect cleanup",
+    result(.disconnecting, userInitiated: true, reconnectSession: true, effects: [.stopTunnel(after: .disconnected)]),
+    reduce(reconnectingSession, .disconnectRequested(after: .disconnected))
+)
+check(
+    "duplicate connect request while reconnecting is ignored",
+    TunnelReducer.Result(state: reconnectingSession, effects: []),
+    reduce(reconnectingSession, .connectRequested(profileConfigured: true, pinAvailable: true))
+)
+
+let reconnectingAttempt = context(.connecting, connectStart: now, fingerprint: fingerprint, userInitiated: true, reconnectSession: true)
+check(
+    "auth failure during reconnect stops immediately in red",
+    result(.errAuth, connectStart: now, fingerprint: fingerprint, userInitiated: true),
+    reduce(reconnectingAttempt, .startCompleted(.authenticationFailed))
+)
+check(
+    "first failed attempt within the quota tears down and retries",
+    TunnelReducer.Result(
+        state: context(.disconnecting, connectStart: now, fingerprint: fingerprint, reconnectAttempts: 1, userInitiated: true, reconnectSession: true),
+        effects: [.stopTunnel(after: .reconnecting)]
+    ),
+    reduce(reconnectingAttempt, .startFailed)
+)
+check(
+    "third failed attempt exhausts the quota into terminal red",
+    TunnelReducer.Result(
+        state: context(.disconnecting, connectStart: now, fingerprint: fingerprint, reconnectAttempts: 3, userInitiated: true, reconnectSession: false),
+        effects: [.stopTunnel(after: .errReconnectFailed)]
+    ),
+    reduce(context(.connecting, connectStart: now, fingerprint: fingerprint, reconnectAttempts: 2, userInitiated: true, reconnectSession: true), .startFailed)
+)
+check(
+    "transport failure outside a reconnect session keeps timeout convergence",
+    TunnelReducer.Result(
+        state: context(.connecting, connectStart: now, fingerprint: fingerprint, userInitiated: true),
+        effects: []
+    ),
+    reduce(context(.connecting, connectStart: now, fingerprint: fingerprint, userInitiated: true), .startFailed)
+)
+
+if assertions == 59 {
     print("  ok   all event assertions executed")
 } else {
     failures += 1
-    print("  FAIL all event assertions executed\n       expected: 47\n       actual:   \(assertions)")
+    print("  FAIL all event assertions executed\n       expected: 59\n       actual:   \(assertions)")
 }
 
 if failures > 0 {

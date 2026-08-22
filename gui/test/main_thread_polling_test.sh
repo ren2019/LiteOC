@@ -84,7 +84,8 @@ check_contains_text "save invalidation advances the poll generation" \
 check_contains_text "save invalidation advances the network-read generation" \
   'networkReader\.invalidate\(\)' "$invalidation_body"
 check_contains "App build links the polling module" 'TunnelPolling.swift' "$BUILD"
-check_count "App keeps a single Timer" 'Timer\(timeInterval:' "$MAIN" 1
+check_count "App keeps a single polling timer" '#selector\(tick\)' "$MAIN" 1
+check_count "reconnecting blink runs on its own timer" '#selector\(blinkTick\)' "$MAIN" 1
 check_contains_text "connecting keeps the 0.5s polling interval" \
   'state == \.connecting.*\? 0\.5 : 4\.0' "$reschedule_body"
 

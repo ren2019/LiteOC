@@ -44,6 +44,9 @@ check("Disconnected connects",
 check("Connecting cancels",
       menuPresentation(for: .connecting, isConfigured: true),
       expected("正在连接…", "", "取消", .disconnect, .busy))
+check("Reconnecting waits on the network and cancels",
+      menuPresentation(for: .reconnecting, isConfigured: true),
+      expected("正在重新连接…", "网络已变化", "取消", .disconnect, .busy))
 check("Disconnecting is disabled",
       menuPresentation(for: .disconnecting, isConfigured: true),
       expected("正在断开…", "正在清理路由", "", .none, .busy))
@@ -68,6 +71,9 @@ check("drop retries",
 check("network change retries",
       menuPresentation(for: .errNetworkChanged, isConfigured: true),
       expected("网络已变化", "", "重试", .connect, .error))
+check("reconnect exhaustion retries",
+      menuPresentation(for: .errReconnectFailed, isConfigured: true),
+      expected("重连失败", "", "重试", .connect, .error))
 check("route error retries cleanup",
       menuPresentation(for: .errRoute, isConfigured: true),
       expected("路由清理失败", "", "清理", .disconnect, .error))
@@ -76,8 +82,9 @@ check("stop error retries cleanup",
       expected("断开未完成", "", "清理", .disconnect, .error))
 
 let presentations = [
-    TunnelState.repairing, .disconnected, .connecting, .disconnecting, .connected,
-    .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged
+    TunnelState.repairing, .disconnected, .connecting, .reconnecting, .disconnecting, .connected,
+    .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged,
+    .errReconnectFailed
 ].map {
     menuPresentation(for: $0, isConfigured: true, connectedIP: "198.51.100.146")
 }

@@ -7,6 +7,9 @@ enum TunnelReducer {
         var networkTransitionStreak: Int
         let connectStart: Date?
         let connectionNetworkFingerprint: Fingerprint?
+        var reconnectAttempts = 0
+        var userInitiated = false
+        var reconnectSession = false
     }
 
     struct Thresholds: Equatable {
@@ -14,6 +17,7 @@ enum TunnelReducer {
         let connectingTimeout: TimeInterval
         let connectedDownLimit: Int
         let networkTransitionLimit: Int
+        var reconnectAttemptLimit = 3
     }
 
     enum Alert: Equatable {
@@ -45,6 +49,25 @@ enum TunnelReducer {
         case steady
         case transitioning(streak: Int)
         case changed
+    }
+
+    // 重连会话中的一次失败尝试 (issue #24 / ADR-0003): 配额内再拆一轮继续,配额尽转终红。
+    static func reconnectAttemptFailed(state: Context, limit: Int) -> Result {
+        let attempts = state.reconnectAttempts + 1
+        let exhausted = attempts >= limit
+        return Result(
+            state: Context(
+                phase: .disconnecting,
+                downStreak: 0,
+                networkTransitionStreak: 0,
+                connectStart: state.connectStart,
+                connectionNetworkFingerprint: state.connectionNetworkFingerprint,
+                reconnectAttempts: attempts,
+                userInitiated: state.userInitiated,
+                reconnectSession: !exhausted
+            ),
+            effects: [.stopTunnel(after: exhausted ? .errReconnectFailed : .reconnecting)]
+        )
     }
 
     enum Event: Equatable {
@@ -87,14 +110,20 @@ enum TunnelReducer {
             _ phase: TunnelState,
             connectStart: Date? = state.connectStart,
             fingerprint: Fingerprint? = state.connectionNetworkFingerprint,
-            networkTransitionStreak: Int = 0
+            networkTransitionStreak: Int = 0,
+            reconnectAttempts: Int = state.reconnectAttempts,
+            userInitiated: Bool = state.userInitiated,
+            reconnectSession: Bool = state.reconnectSession
         ) -> Context {
             Context(
                 phase: phase,
                 downStreak: 0,
                 networkTransitionStreak: networkTransitionStreak,
                 connectStart: connectStart,
-                connectionNetworkFingerprint: fingerprint
+                connectionNetworkFingerprint: fingerprint,
+                reconnectAttempts: reconnectAttempts,
+                userInitiated: userInitiated,
+                reconnectSession: reconnectSession
             )
         }
 
@@ -105,10 +134,17 @@ enum TunnelReducer {
             )
         }
 
+        // 确认网络变化: 用户会话转入自动重连,启动残留维持旧终态红 (issue #24 / ADR-0003)。
         func networkChange() -> Result {
-            Result(
-                state: context(.disconnecting),
-                effects: [.stopTunnel(after: .errNetworkChanged)]
+            guard state.userInitiated else {
+                return Result(
+                    state: context(.disconnecting),
+                    effects: [.stopTunnel(after: .errNetworkChanged)]
+                )
+            }
+            return Result(
+                state: context(.disconnecting, connectStart: nil),
+                effects: [.stopTunnel(after: .reconnecting)]
             )
         }
 
@@ -136,20 +172,34 @@ enum TunnelReducer {
             return Result(state: context(.errRoute), effects: [])
 
         case let .connectRequested(profileConfigured, pinAvailable):
-            if state.phase == .connecting { return Result(state: state, effects: []) }
+            if state.phase == .connecting || state.phase == .reconnecting {
+                return Result(state: state, effects: [])
+            }
             guard profileConfigured else {
                 return Result(
-                    state: context(.disconnected),
+                    state: context(.disconnected, connectStart: nil),
                     effects: [.showSettings(focusPin: false)]
                 )
             }
             guard pinAvailable else {
                 return Result(
-                    state: context(.disconnected),
+                    state: context(.disconnected, connectStart: nil),
                     effects: [.showSettings(focusPin: true)]
                 )
             }
-            return Result(state: state, effects: [.readConnectionNetwork])
+            return Result(
+                state: Context(
+                    phase: state.phase,
+                    downStreak: 0,
+                    networkTransitionStreak: 0,
+                    connectStart: state.connectStart,
+                    connectionNetworkFingerprint: state.connectionNetworkFingerprint,
+                    reconnectAttempts: 0,
+                    userInitiated: true,
+                    reconnectSession: false
+                ),
+                effects: [.readConnectionNetwork]
+            )
 
         case let .connectionNetworkRead(result):
             switch result {
@@ -159,6 +209,8 @@ enum TunnelReducer {
                     effects: [.startConnect]
                 )
             case .unavailable:
+                // 重连等待网络: 保持黄灯不计数,由周期轮询驱动下一轮读 (issue #24)。
+                if state.phase == .reconnecting { return Result(state: state, effects: []) }
                 return Result(state: context(.errNetworkChanged), effects: [])
             case let .configError(missingFields):
                 return missing(missingFields)
@@ -184,7 +236,8 @@ enum TunnelReducer {
             case .alreadyRunning, .stopTimeout:
                 return Result(state: state, effects: [.clearMissingConfigFields])
             case .authenticationFailed:
-                return Result(state: context(.errAuth), effects: [])
+                // 重连途中 PIN 失效: 立即红,重试无意义 (issue #24)。
+                return Result(state: context(.errAuth, reconnectSession: false), effects: [])
             case .certificateDiscoveryFailed:
                 return Result(state: context(.errCert), effects: [])
             case .openconnectMissing:
@@ -195,12 +248,16 @@ enum TunnelReducer {
             case .noPin:
                 return Result(state: context(.disconnected), effects: [])
             case .routeFailure:
+                if state.reconnectSession { return reconnectAttemptFailed(state: state, limit: thresholds.reconnectAttemptLimit) }
                 return Result(state: context(.errRoute), effects: [])
             case let .configError(missingFields):
                 return missing(missingFields)
             }
 
         case .startFailed:
+            if state.phase == .connecting, state.reconnectSession {
+                return reconnectAttemptFailed(state: state, limit: thresholds.reconnectAttemptLimit)
+            }
             return Result(state: state, effects: [])
 
         case let .disconnectRequested(successState):
@@ -213,8 +270,20 @@ enum TunnelReducer {
         case let .stopCompleted(result, successState):
             switch result {
             case .stopped:
+                // 拆完进入重连会话: 清基线,发起新一轮"指纹先读、有基线再连"链 (issue #24)。
+                if successState == .reconnecting {
+                    return Result(
+                        state: context(
+                            .reconnecting,
+                            connectStart: nil,
+                            fingerprint: nil,
+                            reconnectSession: true
+                        ),
+                        effects: [.clearMissingConfigFields, .readConnectionNetwork]
+                    )
+                }
                 return Result(
-                    state: context(successState, fingerprint: nil),
+                    state: context(successState, fingerprint: nil, reconnectSession: false),
                     effects: [.clearMissingConfigFields]
                 )
             case .stopTimeout:
@@ -275,19 +344,29 @@ enum TunnelReducer {
             _ phase: TunnelState,
             downStreak: Int = 0,
             connectStart: Date? = state.connectStart,
-            networkTransitionStreak: Int = 0
+            networkTransitionStreak: Int = 0,
+            reconnectAttempts: Int = state.reconnectAttempts,
+            userInitiated: Bool = state.userInitiated,
+            reconnectSession: Bool = state.reconnectSession
         ) -> Context {
             Context(
                 phase: phase,
                 downStreak: downStreak,
                 networkTransitionStreak: networkTransitionStreak,
                 connectStart: connectStart,
-                connectionNetworkFingerprint: state.connectionNetworkFingerprint
+                connectionNetworkFingerprint: state.connectionNetworkFingerprint,
+                reconnectAttempts: reconnectAttempts,
+                userInitiated: userInitiated,
+                reconnectSession: reconnectSession
             )
         }
 
         func stop(after phase: TunnelState) -> Result {
-            Result(state: context(.disconnecting), effects: [.stopTunnel(after: phase)])
+            // 重连会话中的连接超时算一次失败尝试,配额内继续拆隧道重试 (issue #24)。
+            if phase == .errTimeout, state.reconnectSession {
+                return reconnectAttemptFailed(state: state, limit: thresholds.reconnectAttemptLimit)
+            }
+            return Result(state: context(.disconnecting), effects: [.stopTunnel(after: phase)])
         }
 
         if case let .configError(missingFields)? = snapshot {
@@ -309,6 +388,13 @@ enum TunnelReducer {
                 limit: thresholds.networkTransitionLimit
             ) {
             case .changed:
+                // 用户会话转自动重连(计数清零);启动残留维持旧终态红 (issue #24)。
+                if state.userInitiated {
+                    return Result(
+                        state: context(.disconnecting, reconnectAttempts: 0),
+                        effects: [.stopTunnel(after: .reconnecting)]
+                    )
+                }
                 return stop(after: .errNetworkChanged)
             case let .transitioning(nextStreak):
                 return Result(
@@ -333,8 +419,8 @@ enum TunnelReducer {
                 }
             case .connected:
                 return Result(state: context(.connected), effects: [])
-            case .repairing, .disconnected, .disconnecting, .errTimeout, .errAuth,
-                 .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged:
+            case .repairing, .disconnected, .disconnecting, .reconnecting, .errTimeout, .errAuth,
+                 .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged, .errReconnectFailed:
                 break
             }
             return Result(state: state, effects: [])
@@ -349,7 +435,7 @@ enum TunnelReducer {
         case .disconnected:
             switch snapshot {
             case .routeStale:
-                return stop(after: .disconnected)
+                return Result(state: context(.disconnecting), effects: [.stopTunnel(after: .disconnected)])
             case .connecting:
                 return Result(state: context(.connecting, connectStart: now), effects: [])
             case .connected:
@@ -381,6 +467,10 @@ enum TunnelReducer {
             }
             return Result(state: state, effects: [])
 
+        case .reconnecting:
+            // 等待网络由周期 tick 驱动重读(选 tick 而非 effect 自循环: 单一计时器节奏可测,断网期间自然限频)。
+            return Result(state: state, effects: [.readConnectionNetwork])
+
         case .connected:
             switch snapshot {
             case .routeStale:
@@ -401,7 +491,7 @@ enum TunnelReducer {
             return Result(state: state, effects: [])
 
         case .repairing, .disconnecting, .errTimeout, .errAuth, .errCert,
-             .errDropped, .errRoute, .errStop, .errNetworkChanged:
+             .errDropped, .errRoute, .errStop, .errNetworkChanged, .errReconnectFailed:
             return Result(state: state, effects: [])
         }
     }

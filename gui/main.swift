@@ -401,6 +401,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var colorImg: NSImage!
     var grayImg: NSImage!
     var redImg: NSImage!
+    var yellowImg: NSImage!
+    var blinkTimer: Timer?
+    var blinkVisible = true
     var spinner: NSProgressIndicator!
     var reducerContext: TunnelReducer.Context = .init(
         phase: .disconnected,
@@ -417,7 +420,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         connectingDownGrace: 3,
         connectingTimeout: 30,
         connectedDownLimit: 2,
-        networkTransitionLimit: 2
+        networkTransitionLimit: 2,
+        reconnectAttemptLimit: 3
     )
     let vpnQueue = DispatchQueue(label: "local.liteoc.control")
     let pollQueue = DispatchQueue(label: "local.liteoc.poll")
@@ -446,7 +450,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func updatePrimaryMenu() { primaryMenuView?.update(currentMenuPresentation()) }
     func applicationDidFinishLaunching(_ n: Notification) {
         ensureConfig(); reloadConfig()
-        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray", template: true); redImg = loadImg("menubar_red")
+        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray", template: true); redImg = loadImg("menubar_red"); yellowImg = loadImg("menubar_yellow")
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.imagePosition = .imageOnly; item.button?.image = grayImg
         spinner = NSProgressIndicator()
@@ -627,16 +631,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         interpret(result.effects)
     }
 
-    // 状态驱动单一计时器频率: connecting 0.5s (状态检测),其余 4s。
+    // 状态驱动单一轮询计时器: connecting 0.5s (状态检测),reconnecting 1s (等网络尽快恢复),其余 4s。
     func reschedule() {
-        let want: TimeInterval = (state == .connecting) ? 0.5 : 4.0
+        let want: TimeInterval = (state == .reconnecting) ? 1.0 : (state == .connecting ? 0.5 : 4.0)
         if let t = timer, t.timeInterval == want { return }
         timer?.invalidate()
         let t = Timer(timeInterval: want, target: self, selector: #selector(tick), userInfo: nil, repeats: true)
         RunLoop.main.add(t, forMode: .common); timer = t
     }
 
+    // 重连黄灯闪烁: 静态黄图标定时显隐,离开 reconnecting 即停 (issue #24)。
+    @objc func blinkTick() {
+        blinkVisible.toggle()
+        item.button?.image = blinkVisible ? yellowImg : nil
+    }
+
     func updateStatePresentation(from previousState: TunnelState) {
+        if state == .reconnecting {
+            if blinkTimer == nil {
+                blinkVisible = true
+                item.button?.image = yellowImg
+                blinkTimer = Timer(timeInterval: 0.6, target: self, selector: #selector(blinkTick), userInfo: nil, repeats: true)
+                RunLoop.main.add(blinkTimer!, forMode: .common)
+            }
+        } else if blinkTimer != nil {
+            blinkTimer?.invalidate(); blinkTimer = nil; blinkVisible = true
+        }
         switch spinnerAnimationAction(from: previousState, to: state) {
         case .start:
             spinner.startAnimation(nil)
@@ -645,19 +665,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .none:
             break
         }
-        switch state {
-        case .repairing:
-            item.button?.image = grayImg
-        case .disconnected:
-            item.button?.image = grayImg
-        case .connecting:
-            item.button?.image = nil
-        case .disconnecting:
-            item.button?.image = grayImg
-        case .connected:
-            item.button?.image = colorImg
-        case .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged:
-            item.button?.image = redImg
+        if state != .reconnecting {
+            switch state {
+            case .repairing:
+                item.button?.image = grayImg
+            case .disconnected:
+                item.button?.image = grayImg
+            case .connecting:
+                item.button?.image = nil
+            case .disconnecting:
+                item.button?.image = grayImg
+            case .reconnecting:
+                break
+            case .connected:
+                item.button?.image = colorImg
+            case .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop,
+                 .errNetworkChanged, .errReconnectFailed:
+                item.button?.image = redImg
+            }
         }
         updatePrimaryMenu()
         reschedule()
