@@ -405,6 +405,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var reducerContext: TunnelReducer.Context = .init(
         phase: .disconnected,
         downStreak: 0,
+        networkTransitionStreak: 0,
         connectStart: nil,
         connectionNetworkFingerprint: nil
     )
@@ -415,7 +416,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let reducerThresholds = TunnelReducer.Thresholds(
         connectingDownGrace: 3,
         connectingTimeout: 30,
-        connectedDownLimit: 2
+        connectedDownLimit: 2,
+        networkTransitionLimit: 2
     )
     let vpnQueue = DispatchQueue(label: "local.liteoc.control")
     let pollQueue = DispatchQueue(label: "local.liteoc.poll")
@@ -602,7 +604,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func reduce(_ event: TunnelReducer.Event) {
         poller.invalidate()
-        apply(TunnelReducer.reduce(state: reducerContext, event: event, now: Date()))
+        apply(TunnelReducer.reduce(
+            state: reducerContext,
+            event: event,
+            now: Date(),
+            thresholds: reducerThresholds
+        ))
     }
 
     func apply(_ result: TunnelReducer.Result, snapshot: StatusSnapshot? = nil) {

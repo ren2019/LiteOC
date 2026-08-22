@@ -4,6 +4,7 @@ enum TunnelReducer {
     struct Context: Equatable {
         let phase: TunnelState
         let downStreak: Int
+        var networkTransitionStreak: Int
         let connectStart: Date?
         let connectionNetworkFingerprint: Fingerprint?
     }
@@ -12,6 +13,7 @@ enum TunnelReducer {
         let connectingDownGrace: TimeInterval
         let connectingTimeout: TimeInterval
         let connectedDownLimit: Int
+        let networkTransitionLimit: Int
     }
 
     enum Alert: Equatable {
@@ -39,6 +41,12 @@ enum TunnelReducer {
         case failed
     }
 
+    enum NetworkTransition: Equatable {
+        case steady
+        case transitioning(streak: Int)
+        case changed
+    }
+
     enum Event: Equatable {
         case launch(profileConfigured: Bool)
         case repairCompleted(RepairResult)
@@ -58,15 +66,33 @@ enum TunnelReducer {
         let effects: [Effect]
     }
 
-    static func reduce(state: Context, event: Event, now: Date) -> Result {
+    // 网络过渡防抖 (issue #23 / ADR-0003): 取不到指纹是过渡态,连续 limit 个周期才判变化;
+    // 读到确定不同(非 nil 且不等于基线)不防抖。
+    static func networkTransition(
+        baseline: Fingerprint,
+        network: Fingerprint?,
+        streak: Int,
+        limit: Int
+    ) -> NetworkTransition {
+        guard let network else {
+            let next = streak + 1
+            return next >= limit ? .changed : .transitioning(streak: next)
+        }
+        if network == baseline { return .steady }
+        return .changed
+    }
+
+    static func reduce(state: Context, event: Event, now: Date, thresholds: Thresholds) -> Result {
         func context(
             _ phase: TunnelState,
             connectStart: Date? = state.connectStart,
-            fingerprint: Fingerprint? = state.connectionNetworkFingerprint
+            fingerprint: Fingerprint? = state.connectionNetworkFingerprint,
+            networkTransitionStreak: Int = 0
         ) -> Context {
             Context(
                 phase: phase,
                 downStreak: 0,
+                networkTransitionStreak: networkTransitionStreak,
                 connectStart: connectStart,
                 connectionNetworkFingerprint: fingerprint
             )
@@ -206,16 +232,33 @@ enum TunnelReducer {
             return Result(state: context(.errRoute, fingerprint: nil), effects: [])
 
         case let .fingerprintRead(result):
+            let read: Fingerprint?
             switch result {
             case let .available(fingerprint):
-                return Result(
-                    state: context(state.phase, fingerprint: fingerprint),
-                    effects: []
-                )
+                read = fingerprint
             case .unavailable, .failed:
-                return networkChange()
+                read = nil
             case let .configError(missingFields):
                 return missing(missingFields)
+            }
+            guard let baseline = state.connectionNetworkFingerprint else {
+                if let read {
+                    return Result(state: context(state.phase, fingerprint: read), effects: [])
+                }
+                return networkChange()
+            }
+            switch networkTransition(
+                baseline: baseline,
+                network: read,
+                streak: state.networkTransitionStreak,
+                limit: thresholds.networkTransitionLimit
+            ) {
+            case .changed:
+                return networkChange()
+            case .steady:
+                return Result(state: context(state.phase, fingerprint: read), effects: [])
+            case let .transitioning(streak):
+                return Result(state: context(state.phase, networkTransitionStreak: streak), effects: [])
             }
         }
     }
@@ -227,10 +270,17 @@ enum TunnelReducer {
         now: Date,
         thresholds: Thresholds
     ) -> Result {
-        func context(_ phase: TunnelState, downStreak: Int = 0, connectStart: Date? = state.connectStart) -> Context {
+        var state = state
+        func context(
+            _ phase: TunnelState,
+            downStreak: Int = 0,
+            connectStart: Date? = state.connectStart,
+            networkTransitionStreak: Int = 0
+        ) -> Context {
             Context(
                 phase: phase,
                 downStreak: downStreak,
+                networkTransitionStreak: networkTransitionStreak,
                 connectStart: connectStart,
                 connectionNetworkFingerprint: state.connectionNetworkFingerprint
             )
@@ -247,11 +297,31 @@ enum TunnelReducer {
             )
         }
 
+        // 过渡态指纹 (nil) 防抖: 网络瞬断不立即拆隧道,连续 limit 个周期才判变化 (issue #23)。
+        // 过渡中直接返回 (不动作); 确定不同立即拆; 恢复=基线时计数清零后继续正常快照归约。
         let monitorsNetwork = state.phase == .connecting || state.phase == .connected
         if monitorsNetwork,
-           let baseline = state.connectionNetworkFingerprint,
-           network != Optional(baseline) {
-            return stop(after: .errNetworkChanged)
+           let baseline = state.connectionNetworkFingerprint {
+            switch networkTransition(
+                baseline: baseline,
+                network: network,
+                streak: state.networkTransitionStreak,
+                limit: thresholds.networkTransitionLimit
+            ) {
+            case .changed:
+                return stop(after: .errNetworkChanged)
+            case let .transitioning(nextStreak):
+                return Result(
+                    state: context(
+                        state.phase,
+                        downStreak: state.downStreak,
+                        networkTransitionStreak: nextStreak
+                    ),
+                    effects: []
+                )
+            case .steady:
+                state.networkTransitionStreak = 0
+            }
         }
 
         guard let snapshot else {

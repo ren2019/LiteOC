@@ -15,16 +15,25 @@ private func check<T: Equatable>(_ description: String, _ expected: T, _ actual:
 
 private let now = Date(timeIntervalSince1970: 1_000)
 private let fingerprint = Fingerprint.value(rawValue: "network en0 192.168.1.17 192.168.1.1")
+private let changedFingerprint = Fingerprint.value(rawValue: "network en1 10.0.0.20 10.0.0.1")
+private let thresholds = TunnelReducer.Thresholds(
+    connectingDownGrace: 3,
+    connectingTimeout: 30,
+    connectedDownLimit: 2,
+    networkTransitionLimit: 2
+)
 
 private func context(
     _ phase: TunnelState,
     downStreak: Int = 0,
     connectStart: Date? = nil,
-    fingerprint: Fingerprint? = nil
+    fingerprint: Fingerprint? = nil,
+    networkTransitionStreak: Int = 0
 ) -> TunnelReducer.Context {
     .init(
         phase: phase,
         downStreak: downStreak,
+        networkTransitionStreak: networkTransitionStreak,
         connectStart: connectStart,
         connectionNetworkFingerprint: fingerprint
     )
@@ -35,6 +44,7 @@ private func result(
     downStreak: Int = 0,
     connectStart: Date? = nil,
     fingerprint: Fingerprint? = nil,
+    networkTransitionStreak: Int = 0,
     effects: [TunnelReducer.Effect] = []
 ) -> TunnelReducer.Result {
     .init(
@@ -42,7 +52,8 @@ private func result(
             phase,
             downStreak: downStreak,
             connectStart: connectStart,
-            fingerprint: fingerprint
+            fingerprint: fingerprint,
+            networkTransitionStreak: networkTransitionStreak
         ),
         effects: effects
     )
@@ -52,9 +63,11 @@ private func reduce(
     _ state: TunnelReducer.Context,
     _ event: TunnelReducer.Event
 ) -> TunnelReducer.Result {
-    TunnelReducer.reduce(state: state, event: event, now: now)
+    TunnelReducer.reduce(state: state, event: event, now: now, thresholds: thresholds)
 }
 
+// Literal expectations from the orchestration event table; the network-transition
+// debounce expectations come from issue #23 (ADR-0003).
 print("== TunnelReducer orchestration events ==")
 
 check(
@@ -203,33 +216,70 @@ check(
 )
 check("stop transport failure is a route error", result(.errRoute, connectStart: now), reduce(disconnecting, .stopFailed))
 
-let connected = context(.connected, connectStart: now)
+let connected = context(.connected, connectStart: now, fingerprint: fingerprint)
 check(
     "captured fingerprint updates reducer context",
     result(.connected, connectStart: now, fingerprint: fingerprint),
     reduce(connected, .fingerprintRead(.available(fingerprint)))
 )
 check(
-    "unavailable capture begins network-change cleanup",
-    result(.disconnecting, connectStart: now, effects: [.stopTunnel(after: .errNetworkChanged)]),
+    "captured fingerprint differing from the baseline begins network-change cleanup",
+    result(.disconnecting, connectStart: now, fingerprint: fingerprint, effects: [.stopTunnel(after: .errNetworkChanged)]),
+    reduce(connected, .fingerprintRead(.available(changedFingerprint)))
+)
+// 网络过渡防抖表 (issue #23 / ADR-0003): .unavailable/.failed 均视为指纹取不到。
+check(
+    "single unavailable capture is a tolerated transition",
+    result(.connected, connectStart: now, fingerprint: fingerprint, networkTransitionStreak: 1),
     reduce(connected, .fingerprintRead(.unavailable))
 )
 check(
-    "failed capture begins network-change cleanup",
-    result(.disconnecting, connectStart: now, effects: [.stopTunnel(after: .errNetworkChanged)]),
+    "single failed capture is a tolerated transition",
+    result(.connected, connectStart: now, fingerprint: fingerprint, networkTransitionStreak: 1),
     reduce(connected, .fingerprintRead(.failed))
+)
+check(
+    "second consecutive unavailable capture begins network-change cleanup",
+    result(.disconnecting, connectStart: now, fingerprint: fingerprint, effects: [.stopTunnel(after: .errNetworkChanged)]),
+    reduce(context(.connected, connectStart: now, fingerprint: fingerprint, networkTransitionStreak: 1), .fingerprintRead(.unavailable))
+)
+check(
+    "second consecutive failed capture begins network-change cleanup",
+    result(.disconnecting, connectStart: now, fingerprint: fingerprint, effects: [.stopTunnel(after: .errNetworkChanged)]),
+    reduce(context(.connected, connectStart: now, fingerprint: fingerprint, networkTransitionStreak: 1), .fingerprintRead(.failed))
+)
+check(
+    "recovered capture read equal to the baseline clears the streak",
+    result(.connected, connectStart: now, fingerprint: fingerprint),
+    reduce(context(.connected, connectStart: now, fingerprint: fingerprint, networkTransitionStreak: 1), .fingerprintRead(.available(fingerprint)))
+)
+check(
+    "capture read differing from the baseline after a transition still tears down immediately",
+    result(.disconnecting, connectStart: now, fingerprint: fingerprint, effects: [.stopTunnel(after: .errNetworkChanged)]),
+    reduce(context(.connected, connectStart: now, fingerprint: fingerprint, networkTransitionStreak: 1), .fingerprintRead(.available(changedFingerprint)))
+)
+let awaitingCapture = context(.connected, connectStart: now)
+check(
+    "capture without a baseline records the fingerprint without judging a change",
+    result(.connected, connectStart: now, fingerprint: fingerprint),
+    reduce(awaitingCapture, .fingerprintRead(.available(fingerprint)))
+)
+check(
+    "capture without a baseline still treats unavailable as a network change",
+    result(.disconnecting, connectStart: now, effects: [.stopTunnel(after: .errNetworkChanged)]),
+    reduce(awaitingCapture, .fingerprintRead(.unavailable))
 )
 check(
     "capture config error is unconfigured",
     result(.disconnected, connectStart: now, effects: [.recordMissingConfigFields(["USER"])]),
-    reduce(connected, .fingerprintRead(.configError(missingFields: ["USER"])))
+    reduce(awaitingCapture, .fingerprintRead(.configError(missingFields: ["USER"])))
 )
 
-if assertions == 40 {
+if assertions == 47 {
     print("  ok   all event assertions executed")
 } else {
     failures += 1
-    print("  FAIL all event assertions executed\n       expected: 40\n       actual:   \(assertions)")
+    print("  FAIL all event assertions executed\n       expected: 47\n       actual:   \(assertions)")
 }
 
 if failures > 0 {

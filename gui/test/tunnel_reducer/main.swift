@@ -21,7 +21,8 @@ private let changedNetwork = Fingerprint.value(rawValue: "network en1 10.0.0.20 
 private let thresholds = TunnelReducer.Thresholds(
     connectingDownGrace: 3,
     connectingTimeout: 30,
-    connectedDownLimit: 2
+    connectedDownLimit: 2,
+    networkTransitionLimit: 2
 )
 
 private struct SnapshotCase {
@@ -41,6 +42,7 @@ private let snapshots = [
 private struct MatrixExpected {
     let phase: TunnelState
     let downStreak: Int
+    let networkTransitionStreak: Int
     let connectStart: Date?
     let fingerprint: Fingerprint?
     let effects: [TunnelReducer.Effect]
@@ -50,6 +52,7 @@ private struct MatrixExpected {
             state: TunnelReducer.Context(
                 phase: phase,
                 downStreak: downStreak,
+                networkTransitionStreak: networkTransitionStreak,
                 connectStart: connectStart,
                 connectionNetworkFingerprint: fingerprint
             ),
@@ -63,11 +66,13 @@ private func expected(
     _ downStreak: Int,
     _ connectStart: Date?,
     _ fingerprint: Fingerprint?,
-    _ effects: [TunnelReducer.Effect] = []
+    _ effects: [TunnelReducer.Effect] = [],
+    networkTransitionStreak: Int = 0
 ) -> MatrixExpected {
     MatrixExpected(
         phase: phase,
         downStreak: downStreak,
+        networkTransitionStreak: networkTransitionStreak,
         connectStart: connectStart,
         fingerprint: fingerprint,
         effects: effects
@@ -80,12 +85,13 @@ private struct MatrixRow {
     let expected: [MatrixExpected]
 }
 
-// Literal expectations from issue #12/#19 and the pre-refactor main.swift.
+// Literal expectations from issue #12/#19, the pre-refactor main.swift, and
+// the network-transition debounce table from issue #23 (ADR-0003).
 // The expected table never calls reducer helpers or mirrors its branches.
 private let matrix: [MatrixRow] = [
     MatrixRow(
         name: "repairing",
-        input: .init(phase: .repairing, downStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        input: .init(phase: .repairing, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
         expected: [
             expected(.repairing, 0, nil, nil),
             expected(.repairing, 0, nil, nil),
@@ -97,7 +103,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "disconnected",
-        input: .init(phase: .disconnected, downStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        input: .init(phase: .disconnected, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
         expected: [
             expected(.disconnected, 0, nil, nil),
             expected(.disconnecting, 0, nil, nil, [.stopTunnel(after: .disconnected)]),
@@ -109,7 +115,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "connecting",
-        input: .init(phase: .connecting, downStreak: 0, connectStart: connectStart, connectionNetworkFingerprint: baseline),
+        input: .init(phase: .connecting, downStreak: 0, networkTransitionStreak: 0, connectStart: connectStart, connectionNetworkFingerprint: baseline),
         expected: [
             expected(.connecting, 0, connectStart, baseline),
             expected(.disconnecting, 0, connectStart, baseline, [.stopTunnel(after: .errNetworkChanged)]),
@@ -121,7 +127,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "disconnecting",
-        input: .init(phase: .disconnecting, downStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        input: .init(phase: .disconnecting, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
         expected: [
             expected(.disconnecting, 0, nil, nil),
             expected(.disconnecting, 0, nil, nil),
@@ -133,7 +139,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "connected",
-        input: .init(phase: .connected, downStreak: 0, connectStart: connectStart, connectionNetworkFingerprint: baseline),
+        input: .init(phase: .connected, downStreak: 0, networkTransitionStreak: 0, connectStart: connectStart, connectionNetworkFingerprint: baseline),
         expected: [
             expected(.connected, 1, connectStart, baseline),
             expected(.disconnecting, 0, connectStart, baseline, [.stopTunnel(after: .errNetworkChanged)]),
@@ -145,7 +151,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "err-timeout",
-        input: .init(phase: .errTimeout, downStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        input: .init(phase: .errTimeout, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
         expected: [
             expected(.errTimeout, 0, nil, nil),
             expected(.errTimeout, 0, nil, nil),
@@ -157,7 +163,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "err-auth",
-        input: .init(phase: .errAuth, downStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        input: .init(phase: .errAuth, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
         expected: [
             expected(.errAuth, 0, nil, nil),
             expected(.errAuth, 0, nil, nil),
@@ -169,7 +175,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "err-cert",
-        input: .init(phase: .errCert, downStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        input: .init(phase: .errCert, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
         expected: [
             expected(.errCert, 0, nil, nil),
             expected(.errCert, 0, nil, nil),
@@ -181,7 +187,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "err-dropped",
-        input: .init(phase: .errDropped, downStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        input: .init(phase: .errDropped, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
         expected: [
             expected(.errDropped, 0, nil, nil),
             expected(.errDropped, 0, nil, nil),
@@ -193,7 +199,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "err-route",
-        input: .init(phase: .errRoute, downStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        input: .init(phase: .errRoute, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
         expected: [
             expected(.errRoute, 0, nil, nil),
             expected(.errRoute, 0, nil, nil),
@@ -205,7 +211,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "err-stop",
-        input: .init(phase: .errStop, downStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        input: .init(phase: .errStop, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
         expected: [
             expected(.errStop, 0, nil, nil),
             expected(.errStop, 0, nil, nil),
@@ -217,7 +223,7 @@ private let matrix: [MatrixRow] = [
     ),
     MatrixRow(
         name: "err-network-changed",
-        input: .init(phase: .errNetworkChanged, downStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
+        input: .init(phase: .errNetworkChanged, downStreak: 0, networkTransitionStreak: 0, connectStart: nil, connectionNetworkFingerprint: nil),
         expected: [
             expected(.errNetworkChanged, 0, nil, nil),
             expected(.errNetworkChanged, 0, nil, nil),
@@ -261,11 +267,13 @@ private func context(
     _ phase: TunnelState,
     downStreak: Int = 0,
     connectStart: Date? = connectStart,
-    fingerprint: Fingerprint? = baseline
+    fingerprint: Fingerprint? = baseline,
+    networkTransitionStreak: Int = 0
 ) -> TunnelReducer.Context {
     .init(
         phase: phase,
         downStreak: downStreak,
+        networkTransitionStreak: networkTransitionStreak,
         connectStart: connectStart,
         connectionNetworkFingerprint: fingerprint
     )
@@ -285,7 +293,12 @@ check("connected second consecutive down is dropped", secondDown, reduce(context
 let resetDown = TunnelReducer.Result(state: context(.connected, downStreak: 0), effects: [])
 check("connected non-down resets the streak", resetDown, reduce(context(.connected, downStreak: 1), .connecting), boundary: true)
 
-let limitThree = TunnelReducer.Thresholds(connectingDownGrace: 3, connectingTimeout: 30, connectedDownLimit: 3)
+let limitThree = TunnelReducer.Thresholds(
+    connectingDownGrace: 3,
+    connectingTimeout: 30,
+    connectedDownLimit: 3,
+    networkTransitionLimit: 2
+)
 let secondOfThree = TunnelReducer.Result(state: context(.connected, downStreak: 2), effects: [])
 check(
     "connected down limit is injected",
@@ -341,22 +354,96 @@ check(
     boundary: true
 )
 check(
-    "unavailable fingerprint is the same network-change error",
+    "changed fingerprint in connecting is the same network-change error",
     networkChanged,
-    reduce(context(.connected), .connected(ip: "10.8.0.42"), network: nil),
+    reduce(context(.connecting), .connecting, network: changedNetwork),
     boundary: true
 )
 
-let connectingNetworkChanged = TunnelReducer.Result(
-    state: context(.disconnecting),
-    effects: [.stopTunnel(after: .errNetworkChanged)]
+// 网络过渡防抖表 (issue #23): 单周期 nil 容忍,恢复=基线清零,连续两周期拆,确定不同立即拆。
+let transitioning = TunnelReducer.Result(state: context(.connected, networkTransitionStreak: 1), effects: [])
+check(
+    "single nil network is a tolerated transition",
+    transitioning,
+    reduce(context(.connected), .connected(ip: "10.8.0.42"), network: nil),
+    boundary: true
 )
 check(
-    "connecting uses the same network-change error",
-    connectingNetworkChanged,
+    "connecting tolerates the same single nil transition",
+    TunnelReducer.Result(state: context(.connecting, networkTransitionStreak: 1), effects: []),
     reduce(context(.connecting), .connecting, network: nil),
     boundary: true
 )
+check(
+    "second consecutive nil tears down the tunnel",
+    networkChanged,
+    reduce(context(.connected, networkTransitionStreak: 1), .connected(ip: "10.8.0.42"), network: nil),
+    boundary: true
+)
+check(
+    "second consecutive nil in connecting tears down the tunnel",
+    networkChanged,
+    reduce(context(.connecting, networkTransitionStreak: 1), .connecting, network: nil),
+    boundary: true
+)
+let recovered = TunnelReducer.Result(state: context(.connected), effects: [])
+check(
+    "recovered fingerprint equal to the baseline clears the streak",
+    recovered,
+    reduce(context(.connected, networkTransitionStreak: 1), .connected(ip: "10.8.0.42")),
+    boundary: true
+)
+check(
+    "nil transition is tolerated even when the status read also failed",
+    transitioning,
+    reduce(context(.connected), nil, network: nil),
+    boundary: true
+)
+check(
+    "second nil wins over the connecting timeout (network compare keeps priority)",
+    TunnelReducer.Result(
+        state: context(.disconnecting, connectStart: Date(timeIntervalSince1970: 969)),
+        effects: [.stopTunnel(after: .errNetworkChanged)]
+    ),
+    reduce(context(.connecting, connectStart: Date(timeIntervalSince1970: 969), networkTransitionStreak: 1), nil, network: nil),
+    boundary: true
+)
+check(
+    "network transition limit is injected",
+    TunnelReducer.Result(state: context(.connected, networkTransitionStreak: 1), effects: []),
+    reduce(
+        context(.connected),
+        .connected(ip: "10.8.0.42"),
+        network: nil,
+        thresholds: TunnelReducer.Thresholds(
+            connectingDownGrace: 3,
+            connectingTimeout: 30,
+            connectedDownLimit: 2,
+            networkTransitionLimit: 3
+        )
+    ),
+    boundary: true
+)
+
+// 防抖判定纯函数冻结表 (issue #23 AC): nil 走计数,恢复=基线清零,确定不同不防抖。
+let transitionTable: [(name: String, network: Fingerprint?, streak: Int, limit: Int, expected: TunnelReducer.NetworkTransition)] = [
+    (name: "first nil is a transition", network: nil, streak: 0, limit: 2, expected: .transitioning(streak: 1)),
+    (name: "second consecutive nil within limit 2 changes", network: nil, streak: 1, limit: 2, expected: .changed),
+    (name: "recovery equal to the baseline is steady", network: baseline, streak: 1, limit: 2, expected: .steady),
+    (name: "differing fingerprint changes without debounce", network: changedNetwork, streak: 0, limit: 2, expected: .changed),
+    (name: "differing fingerprint changes mid-transition", network: changedNetwork, streak: 1, limit: 2, expected: .changed),
+    (name: "limit 3 tolerates the second nil", network: nil, streak: 1, limit: 3, expected: .transitioning(streak: 2)),
+    (name: "limit 3 changes on the third nil", network: nil, streak: 2, limit: 3, expected: .changed)
+]
+for row in transitionTable {
+    check(
+        "networkTransition: \(row.name)",
+        row.expected,
+        TunnelReducer.networkTransition(baseline: baseline, network: row.network, streak: row.streak, limit: row.limit),
+        boundary: true
+    )
+}
+check("networkTransition table has 7 rows", 7, transitionTable.count)
 
 let awaitingFingerprint = context(.connected, fingerprint: nil)
 check(
@@ -434,7 +521,7 @@ let typedVocabulary: [TunnelReducer.Effect] = [
 check("effect vocabulary is typed and equatable", 4, typedVocabulary.count, boundary: true)
 
 check("all 72 matrix cells executed", 72, matrixAssertions)
-check("all 21 boundary assertions executed", 21, boundaryAssertions)
+check("all 35 boundary assertions executed", 35, boundaryAssertions)
 
 if failures > 0 {
     print("\n\(failures) failed")
