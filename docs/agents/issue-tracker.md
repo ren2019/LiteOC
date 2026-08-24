@@ -2,6 +2,8 @@
 
 Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
+> 历史票(#1–#25,含 v1.10 收口的 #23/#24/#25)归档在私有仓 `ren2019/LiteOC-old`(archived,只读)。本仓 `ren2019/LiteOC` 是唯一活跃 issue 面;查历史票时用 `gh issue view <N> -R ren2019/LiteOC-old`。
+
 ## Conventions
 
 - **Create an issue**: `gh issue create -R ren2019/LiteOC --title "..." --body "..."` (heredoc for multi-line bodies).
