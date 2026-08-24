@@ -10,6 +10,8 @@ gui/menubar_red.png
 
 # 本地机密 (PIN 走钥匙串; vpn.env 以防万一)
 vpn.env
+.cred
+
 
 # macOS
 .DS_Store
