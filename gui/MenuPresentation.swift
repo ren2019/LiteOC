@@ -14,12 +14,17 @@ enum MenuTone: Equatable {
 }
 
 enum PrimaryMenuLayout {
-    static let width: CGFloat = 272
+    // 宽度由菜单内容决定(自定义 view 不设固定宽, NSMenu 会拉伸到菜单宽); 仅保留纵向与内边距几何。
     static let height: CGFloat = 46
+    /// 自定义 view 初始宽: 仅作菜单内容最小宽参考, NSMenu 展开时拉伸到菜单宽 (menu.minimumWidth 兜底)。
+    static let initialViewWidth: CGFloat = 160
     static let horizontalInset: CGFloat = 10
-    static let statusWidth: CGFloat = 14
     static let actionWidth: CGFloat = 40
     static let spacing: CGFloat = 8
+}
+
+enum ConnectionInfoLayout {
+    static let height: CGFloat = 44
 }
 
 struct MenuPresentation: Equatable {
@@ -28,6 +33,17 @@ struct MenuPresentation: Equatable {
     let actionTitle: String
     let action: PrimaryMenuAction
     let tone: MenuTone
+    /// 未配置引导: 首行以红色描边提示完成初始设置 (2026-08-31 首行样式定稿"有事才着色")。
+    let configurationGuide: Bool
+
+    init(title: String, subtitle: String, actionTitle: String, action: PrimaryMenuAction, tone: MenuTone, configurationGuide: Bool = false) {
+        self.title = title
+        self.subtitle = subtitle
+        self.actionTitle = actionTitle
+        self.action = action
+        self.tone = tone
+        self.configurationGuide = configurationGuide
+    }
 
     var isEnabled: Bool { action != .none }
 }
@@ -64,7 +80,7 @@ func menuPresentation(
     case .disconnected where !isConfigured:
         return MenuPresentation(
             title: "未配置", subtitle: "完成设置后即可连接", actionTitle: "设置",
-            action: .openSettings, tone: .neutral
+            action: .openSettings, tone: .neutral, configurationGuide: true
         )
     case .disconnected:
         return MenuPresentation(
@@ -87,8 +103,9 @@ func menuPresentation(
             action: .none, tone: .busy
         )
     case .connected:
+        // 2026-08-31: IP 移入 Connection Info Row, 首行副标题留空。
         return MenuPresentation(
-            title: "已连接", subtitle: connectedIP, actionTitle: "断开",
+            title: "已连接", subtitle: "", actionTitle: "断开",
             action: .disconnect, tone: .connected
         )
     case .errAuth:
@@ -132,4 +149,26 @@ func menuPresentation(
             action: .disconnect, tone: .error
         )
     }
+}
+
+struct ConnectionInfoPresentation: Equatable {
+    /// 隧道 IP (等宽字体展示)。
+    let title: String
+    /// 默认 "网关 <host:port>"; 复制后为一次性 "已复制到剪贴板"。
+    let subtitle: String
+}
+
+// Connection Info Row: 仅 connected 且有有效 IP 时出现 (CONTEXT.md 术语)。
+// "已复制"瞬态由 App 层注入一次性标志, 呈现层只做映射。
+func connectionInfoPresentation(
+    for state: TunnelState,
+    connectedIP: String = "",
+    gateway: String = "",
+    showsCopiedConfirmation: Bool = false
+) -> ConnectionInfoPresentation? {
+    guard state == .connected, !connectedIP.isEmpty else { return nil }
+    return ConnectionInfoPresentation(
+        title: connectedIP,
+        subtitle: showsCopiedConfirmation ? "已复制到剪贴板" : "网关 \(gateway)"
+    )
 }

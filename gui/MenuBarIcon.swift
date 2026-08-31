@@ -28,8 +28,10 @@ private func staticSpec(_ lit: [Int], isErrorRed: Bool = false) -> IconSpec {
 }
 
 func iconSpec(for state: TunnelState, isConfigured: Bool) -> IconSpec {
-    // disconnected 无论配置与否都是全灭, isConfigured 不改变图标 (spec 决策)。
+    // disconnected 已配置 = 全灭; 未配置 = 红色 C 形 (2026-08-31 新增语义, 对旧"一律全灭"规则的显式例外)。
     switch state {
+    case .disconnected where !isConfigured:
+        return staticSpec([0, 1, 2, 3, 6, 7, 8], isErrorRed: true)     // C 形: 顶行 + 左中 + 底行
     case .disconnected:
         return staticSpec([])
     case .connected:

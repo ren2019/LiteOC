@@ -48,6 +48,14 @@ func pinSet(_ service: String, _ v: String) {
     run("/usr/bin/security", ["add-generic-password", "-s", service, "-a", AppConfig.keychainAccount, "-w", v, "-T", "/usr/bin/security", "-U"])
 }
 
+// ---- 诊断信息: Network Fingerprint 描述 ----
+func describeFingerprint(_ fingerprint: Fingerprint?) -> String {
+    guard let fingerprint else { return "无" }
+    switch fingerprint {
+    case let .value(raw): return raw
+    }
+}
+
 // ---- 菜单栏九宫格点阵图标渲染 (AppKit) ----
 func renderDotIcon(lit: Set<Int>, isErrorRed: Bool) -> NSImage {
     let size = MenuBarIconGeometry.canvas
@@ -72,7 +80,6 @@ func renderDotIcon(lit: Set<Int>, isErrorRed: Bool) -> NSImage {
 
 // ---- 菜单主状态项 ----
 final class PrimaryMenuItemView: NSView {
-    private let dot = NSTextField(labelWithString: "○")
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let actionLabel = NSTextField(labelWithString: "")
@@ -84,8 +91,6 @@ final class PrimaryMenuItemView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
 
-        dot.font = .systemFont(ofSize: 16, weight: .medium)
-        dot.alignment = .center
         titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
         subtitleLabel.font = .systemFont(ofSize: 11)
         actionLabel.font = .systemFont(ofSize: 12, weight: .semibold)
@@ -101,19 +106,17 @@ final class PrimaryMenuItemView: NSView {
         copy.orientation = .vertical; copy.alignment = .leading; copy.spacing = 2
         copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
         copy.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let row = NSStackView(views: [dot, copy, actionLabel])
+        let row = NSStackView(views: [copy, actionLabel])
         row.orientation = .horizontal; row.alignment = .centerY; row.distribution = .fill
         row.spacing = PrimaryMenuLayout.spacing
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
 
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: PrimaryMenuLayout.width),
             heightAnchor.constraint(equalToConstant: PrimaryMenuLayout.height),
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PrimaryMenuLayout.horizontalInset),
             row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PrimaryMenuLayout.horizontalInset),
             row.centerYAnchor.constraint(equalTo: centerYAnchor),
-            dot.widthAnchor.constraint(equalToConstant: PrimaryMenuLayout.statusWidth),
             actionLabel.widthAnchor.constraint(equalToConstant: PrimaryMenuLayout.actionWidth)
         ])
         setAccessibilityRole(.button)
@@ -139,17 +142,25 @@ final class PrimaryMenuItemView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 4, dy: 3)
-        let fill: NSColor
+        let path = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
         if hovered && presentation.isEnabled {
-            fill = .selectedContentBackgroundColor
-        } else {
-            switch presentation.tone {
-            case .neutral, .connected: fill = NSColor.systemGreen.withAlphaComponent(0.11)
-            case .busy: fill = NSColor.systemOrange.withAlphaComponent(0.11)
-            case .error: fill = NSColor.systemRed.withAlphaComponent(0.11)
-            }
+            NSColor.selectedContentBackgroundColor.setFill(); path.fill()
+            return
         }
-        fill.setFill(); NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
+        // 2026-08-31: 首行样式定稿"有事才着色"——neutral/connected 为普通行, 仅 busy/error 出 soft 色块;
+        // 未配置 (neutral + configurationGuide) 用红色描边引导初始设置。
+        switch presentation.tone {
+        case .neutral:
+            if presentation.configurationGuide {
+                NSColor.systemRed.setStroke(); path.stroke()
+            }
+        case .busy:
+            NSColor.systemOrange.withAlphaComponent(0.11).setFill(); path.fill()
+        case .connected:
+            break
+        case .error:
+            NSColor.systemRed.withAlphaComponent(0.11).setFill(); path.fill()
+        }
     }
 
     func update(_ value: MenuPresentation) {
@@ -165,16 +176,105 @@ final class PrimaryMenuItemView: NSView {
 
     private func updateColors() {
         if hovered && presentation.isEnabled {
-            dot.textColor = .white; titleLabel.textColor = .white
+            titleLabel.textColor = .white
             subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.78); actionLabel.textColor = .white
         } else {
             titleLabel.textColor = .labelColor; subtitleLabel.textColor = .secondaryLabelColor
             switch presentation.tone {
-            case .neutral: dot.stringValue = "○"; dot.textColor = .secondaryLabelColor; actionLabel.textColor = .systemGreen
-            case .busy: dot.stringValue = "●"; dot.textColor = .systemOrange; actionLabel.textColor = .systemOrange
-            case .connected: dot.stringValue = "●"; dot.textColor = .systemGreen; actionLabel.textColor = .systemGreen
-            case .error: dot.stringValue = "●"; dot.textColor = .systemRed; actionLabel.textColor = .systemRed
+            case .neutral: actionLabel.textColor = presentation.configurationGuide ? .systemRed : .systemBlue
+            case .busy: actionLabel.textColor = .systemOrange
+            case .connected: actionLabel.textColor = .systemGreen
+            case .error: actionLabel.textColor = .systemRed
             }
+        }
+        needsDisplay = true
+    }
+}
+
+// ---- 连接信息行 (Connection Info Row): 等宽 IP + 网关副标题, 点击复制 IP ----
+final class ConnectionInfoMenuItemView: NSView {
+    private let ipLabel = NSTextField(labelWithString: "")
+    private let subtitleLabel = NSTextField(labelWithString: "")
+    private let hintLabel = NSTextField(labelWithString: "复制")
+    private var presentation: ConnectionInfoPresentation?
+    private var tracking: NSTrackingArea?
+    private var hovered = false
+    var onCopy: (() -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+
+        ipLabel.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        subtitleLabel.font = .systemFont(ofSize: 11)
+        hintLabel.font = .systemFont(ofSize: 11)
+        hintLabel.alignment = .right
+        ipLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        ipLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        hintLabel.setContentHuggingPriority(.required, for: .horizontal)
+        hintLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let copy = NSStackView(views: [ipLabel, subtitleLabel])
+        copy.orientation = .vertical; copy.alignment = .leading; copy.spacing = 2
+        copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        copy.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [copy, hintLabel])
+        row.orientation = .horizontal; row.alignment = .centerY; row.distribution = .fill
+        row.spacing = PrimaryMenuLayout.spacing
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: ConnectionInfoLayout.height),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: PrimaryMenuLayout.horizontalInset),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -PrimaryMenuLayout.horizontalInset),
+            row.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area); tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovered = true; updateColors() }
+    override func mouseExited(with event: NSEvent) { hovered = false; updateColors() }
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        enclosingMenuItem?.menu?.cancelTracking()
+        onCopy?()
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard hovered else { return }
+        let rect = bounds.insetBy(dx: 4, dy: 3)
+        NSColor.selectedContentBackgroundColor.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
+    }
+
+    func update(_ value: ConnectionInfoPresentation) {
+        presentation = value
+        ipLabel.stringValue = value.title
+        subtitleLabel.stringValue = value.subtitle
+        setAccessibilityLabel(value.title)
+        setAccessibilityHelp(value.subtitle)
+        updateColors()
+    }
+
+    private func updateColors() {
+        if hovered {
+            ipLabel.textColor = .white
+            subtitleLabel.textColor = NSColor.white.withAlphaComponent(0.78)
+            hintLabel.textColor = NSColor.white.withAlphaComponent(0.8)
+        } else {
+            ipLabel.textColor = .labelColor
+            subtitleLabel.textColor = .secondaryLabelColor
+            hintLabel.textColor = .tertiaryLabelColor
         }
         needsDisplay = true
     }
@@ -416,10 +516,16 @@ final class ConfigWindow: NSObject {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var item: NSStatusItem!
     var primaryMenuView: PrimaryMenuItemView!
+    var connectionInfoItem: NSMenuItem?
+    var connectionInfoView: ConnectionInfoMenuItemView!
+    var showsCopiedConfirmation = false
     var autostartItem: NSMenuItem!
+    var repairNowItem: NSMenuItem!
+    /// 最近一次进入 Error 态的首行标题, 供"复制诊断信息"的"最近错误"使用 (错误恢复后仍保留)。
+    var lastErrorTitle: String?
     var currentIconSpec: IconSpec?
     var iconFrameIndex = 0
     var iconAnimationTimer: Timer?
@@ -460,7 +566,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
         return menuPresentation(for: state, isConfigured: isConfigured, connectedIP: connectedIP)
     }
-    func updatePrimaryMenu() { primaryMenuView?.update(currentMenuPresentation()) }
+    func updatePrimaryMenu() {
+        let presentation = currentMenuPresentation()
+        if presentation.tone == .error { lastErrorTitle = presentation.title }
+        primaryMenuView?.update(presentation)
+    }
     func applicationDidFinishLaunching(_ n: Notification) {
         ensureConfig(); reloadConfig()
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -469,29 +579,129 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             loadConfig(), missingConfigFields: helperMissingConfigFields)))
 
         let menu = NSMenu(); menu.autoenablesItems = false
+        // 菜单最小宽度: 保证首行色块与连接信息行(网关全文)不局促; 内容更宽时仍按内容撑开。
+        if #available(macOS 14, *) { menu.minimumWidth = 244 }
+        menu.delegate = self
+        // 自定义 view 不定宽: 初始宽度只作最小宽度, NSMenu 展开时拉伸到菜单内容宽 (颜色框与内容等宽)。
         primaryMenuView = PrimaryMenuItemView(
-            frame: NSRect(x: 0, y: 0, width: PrimaryMenuLayout.width, height: PrimaryMenuLayout.height)
+            frame: NSRect(x: 0, y: 0, width: PrimaryMenuLayout.initialViewWidth, height: PrimaryMenuLayout.height)
         )
+        primaryMenuView.autoresizingMask = [.width]
         primaryMenuView.onActivate = { [weak self] in self?.performPrimaryMenuAction() }
         let primaryItem = NSMenuItem(); primaryItem.view = primaryMenuView
-        menu.addItem(primaryItem); menu.addItem(.separator())
+        menu.addItem(primaryItem)
+
+        // Connection Info Row: 不常驻装配, 由 menuWillOpen 按状态插入/移除 (仅 connected 且有 IP 时出现)。
+        connectionInfoView = ConnectionInfoMenuItemView(
+            frame: NSRect(x: 0, y: 0, width: PrimaryMenuLayout.initialViewWidth, height: ConnectionInfoLayout.height)
+        )
+        connectionInfoView.autoresizingMask = [.width]
+        connectionInfoView.onCopy = { [weak self] in self?.copyConnectedIP() }
+        let infoItem = NSMenuItem(); infoItem.view = connectionInfoView
+        connectionInfoItem = infoItem
+        menu.addItem(.separator())
 
         let settings = NSMenuItem(title: "设置…", action: #selector(doEditConfig), keyEquivalent: ",")
         settings.target = self; menu.addItem(settings)
         autostartItem = NSMenuItem(title: "登录时自动启动", action: #selector(toggleAutostart), keyEquivalent: ""); autostartItem.target = self
         autostartItem.state = autostartEnabled() ? .on : .off
-        menu.addItem(autostartItem); menu.addItem(.separator())
+        menu.addItem(autostartItem)
+        repairNowItem = NSMenuItem(title: "立即修复", action: #selector(doRepairNow), keyEquivalent: ""); repairNowItem.target = self
+        let copyDiagnostics = NSMenuItem(title: "复制诊断信息", action: #selector(doCopyDiagnostics), keyEquivalent: ""); copyDiagnostics.target = self
+        menu.addItem(repairNowItem); menu.addItem(copyDiagnostics); menu.addItem(.separator())
 
         let about = NSMenuItem(title: "关于 LiteOC", action: #selector(showAbout), keyEquivalent: ""); about.target = self
-        let github = NSMenuItem(title: "访问 GitHub", action: #selector(openGitHub), keyEquivalent: ""); github.target = self
-        let feedback = NSMenuItem(title: "提交反馈…", action: #selector(openFeedback), keyEquivalent: ""); feedback.target = self
+        let github = NSMenuItem(title: "访问 GitHub ↗", action: #selector(openGitHub), keyEquivalent: ""); github.target = self
+        let feedback = NSMenuItem(title: "提交反馈… ↗", action: #selector(openFeedback), keyEquivalent: ""); feedback.target = self
         menu.addItem(about); menu.addItem(github); menu.addItem(feedback); menu.addItem(.separator())
 
-        menu.addItem(NSMenuItem(title: "退出 LiteOC", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        // 退出走自定义 selector: 直接用 terminate: 会被系统识别为标准动作并自动装饰图标 (验收反馈: 去掉退出前的 X)。
+        let quit = NSMenuItem(title: "退出 LiteOC", action: #selector(doQuit), keyEquivalent: "q")
+        quit.target = self; menu.addItem(quit)
         item.menu = menu
         updatePrimaryMenu()
 
         repairAtLaunch()
+    }
+
+    // 菜单每次打开时刷新首行与 Connection Info Row; "已复制"一次性标志显示后即清除。
+    func menuWillOpen(_ menu: NSMenu) {
+        updatePrimaryMenu()
+        repairNowItem?.isEnabled = repairNowSafe
+        guard let infoItem = connectionInfoItem else { return }
+        let presentation = connectionInfoPresentation(
+            for: state,
+            connectedIP: connectedIP,
+            gateway: loadConfig()["HOST"] ?? "",
+            showsCopiedConfirmation: showsCopiedConfirmation
+        )
+        showsCopiedConfirmation = false
+        if let presentation {
+            connectionInfoView.update(presentation)
+            if infoItem.menu == nil { menu.insertItem(infoItem, at: 1) }
+        } else if infoItem.menu != nil {
+            menu.removeItem(infoItem)
+        }
+    }
+
+    func copyConnectedIP() {
+        guard !connectedIP.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(connectedIP, forType: .string)
+        showsCopiedConfirmation = true
+    }
+
+    /// 立即修复仅在隧道不活跃时安全: repair 会清理 Profile 的网关路由, 在活隧道/过渡态上执行会打断真实连接 (code-review 2026-08-31)。
+    var repairNowSafe: Bool {
+        switch state {
+        case .disconnected, .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged, .errReconnectFailed:
+            return true
+        case .repairing, .connecting, .disconnecting, .connected, .reconnecting:
+            return false
+        }
+    }
+
+    // 立即修复: 复用启动时的 repair 链路 (同一 reducer 事件, 不新增 Effect 类型)。
+    @objc func doRepairNow() {
+        guard repairNowSafe else { return }
+        repairAtLaunch()
+    }
+
+    // 退出: 自定义 selector, 避免系统对标准 terminate: 动作的自动图标装饰。
+    @objc func doQuit() {
+        NSApp.terminate(nil)
+    }
+
+    // 复制诊断信息: 状态 + Network Fingerprint 基线/现状 + 最近错误; 绝不含 PIN (机密口径对齐反馈模板)。
+    @objc func doCopyDiagnostics() {
+        let presentation = currentMenuPresentation()
+        let baseline = reducerContext.connectionNetworkFingerprint
+        vpnQueue.async {
+            let current: Fingerprint?
+            do {
+                current = try self.vpnctl.network()
+            } catch {
+                current = nil
+            }
+            DispatchQueue.main.async {
+                let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "未知"
+                let os = ProcessInfo.processInfo.operatingSystemVersionString
+                let text = """
+                LiteOC 诊断信息
+                - LiteOC: \(version)
+                - macOS: \(os)
+                - Tunnel 状态: \(presentation.title)
+                - 隧道 IP: \(self.connectedIP.isEmpty ? "无" : self.connectedIP)
+                - 网络基线: \(describeFingerprint(baseline))
+                - 当前网络: \(describeFingerprint(current))
+                - 最近错误: \(self.lastErrorTitle ?? "无")
+
+                > 请勿附加 PIN、证书指纹、网关地址或公司内网信息。
+                """
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
+        }
     }
 
     func repairAtLaunch() {

@@ -29,18 +29,19 @@ print("== LiteOC menu bar dot-matrix icon ==")
 let brandTPattern = [0, 3, 4, 5, 6]
 
 // 静态正常态
-check("Disconnected is a fully dim static template icon",
+check("Disconnected (configured) is a fully dim static template icon",
       iconSpec(for: .disconnected, isConfigured: true),
       spec([[]], 0))
-check("Unconfigured shares the Disconnected icon",
+// 2026-08-31: 未配置 = 红色 C 形 (对"disconnected 一律全灭"旧规则的显式例外)
+check("Disconnected (unconfigured) is a red C shape",
       iconSpec(for: .disconnected, isConfigured: false),
-      spec([[]], 0))
+      spec([[0, 1, 2, 3, 6, 7, 8]], 0, true))
 check("Connected is the brand T, static and template",
       iconSpec(for: .connected, isConfigured: true),
       spec([brandTPattern], 0))
 
-// 配置与否不改变任何图标
-for state in [TunnelState.repairing, .disconnected, .connecting, .disconnecting, .connected, .reconnecting,
+// 除 disconnected 外, 配置与否不改变任何图标
+for state in [TunnelState.repairing, .connecting, .disconnecting, .connected, .reconnecting,
               .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop, .errNetworkChanged, .errReconnectFailed] {
     checkValue("isConfigured never changes the icon (\(state))",
                iconSpec(for: state, isConfigured: true),

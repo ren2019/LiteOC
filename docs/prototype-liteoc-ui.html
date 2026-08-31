@@ -6,6 +6,11 @@
   <title>LiteOC 菜单与设置 GUI 原型</title>
   <!-- PROTOTYPE — Three LiteOC menu/settings variants, switchable via ?variant=A|B|C. -->
   <!-- DECISION 2026-08-10 — Variant A (原生紧凑) selected as the production baseline. -->
+  <!-- ITERATION 2026-08-31 — 对标 Tailscale 托盘菜单的 Variant A 重设计:首行去掉状态灯(改用语调色块表达状态),
+       新增连接信息行(点击复制 IP),调试项(立即修复/复制诊断信息)全量展示不做 Option 隐藏,
+       菜单栏 3×3 点阵图标预览与 gui/MenuBarIcon.swift 对齐(未配置 = 红色 C 形),预览状态扩展到全 15 态。 -->
+  <!-- DECISION 2026-08-31 — 首行样式定稿"方案3 有事才着色":neutral/connected 为普通行, 仅 busy/error 出 soft 色块,
+       未配置用红色描边引导。顶栏"首行"按钮可对照被否决的"当前色块"与"方案1 极简"。 -->
   <style>
     :root {
       color-scheme: light;
@@ -321,6 +326,62 @@
     .a-primary .action-word { color: var(--accent-text); font-size: 12px; font-weight: 700; }
     .a-primary:hover .action-word { color: white; }
 
+    /* 2026-08-31: 状态灯移除后,首行用语调色块表达状态 */
+    .a-primary.tone-neutral { background: transparent; box-shadow: inset 0 0 0 1px var(--separator); }
+    .a-primary.tone-busy { background: var(--warning-soft); }
+    .a-primary.tone-connected { background: var(--accent-soft); }
+    .a-primary.tone-error { background: var(--danger-soft); }
+    .a-primary.tone-neutral .action-word { color: var(--blue); }
+    .a-primary.tone-busy .action-word { color: var(--warning); }
+    .a-primary.tone-error .action-word { color: var(--danger); }
+    .a-primary.tone-neutral:hover { background: var(--blue) !important; }
+    .a-primary.tone-busy:hover { background: var(--warning) !important; }
+    .a-primary.tone-error:hover { background: var(--danger) !important; }
+    .a-primary.is-disabled, .a-primary.is-disabled:hover { color: var(--label); cursor: default; }
+    .a-primary.is-disabled.tone-neutral:hover { background: transparent !important; }
+    .a-primary.is-disabled.tone-busy:hover { background: var(--warning-soft) !important; }
+
+    /* 2026-08-31 首行样式方案对比(验收后候选): 顶栏"首行"按钮切换 */
+    /* 方案 1 极简(Tailscale 原味): 无色块无描边, 状态由菜单栏图标 + 标题 + 动作词颜色承担 */
+    .a-primary.style-minimal, .a-primary.style-minimal.tone-neutral,
+    .a-primary.style-minimal.tone-busy, .a-primary.style-minimal.tone-connected, .a-primary.style-minimal.tone-error {
+      background: transparent; box-shadow: none;
+    }
+    .a-primary.style-minimal:hover { background: var(--blue) !important; }
+    .a-primary.style-minimal.is-disabled, .a-primary.style-minimal.is-disabled:hover { background: transparent !important; box-shadow: none; }
+    /* 方案 3 有事才着色: neutral/connected 普通行; busy/error 才出色块; 未配置红色描边引导设置 */
+    .a-primary.style-ondemand.tone-neutral, .a-primary.style-ondemand.tone-connected { background: transparent; box-shadow: none; }
+    .a-primary.style-ondemand.tone-neutral:hover, .a-primary.style-ondemand.tone-connected:hover { background: var(--blue) !important; }
+    .a-primary.style-ondemand.is-unconfigured { box-shadow: inset 0 0 0 1px var(--danger); }
+    .a-primary.style-ondemand.is-unconfigured .action-word { color: var(--danger); }
+
+    /* 2026-08-31: 连接信息行(对标 Tailscale "This Device",点击复制 IP) */
+    .a-info { min-height: 44px; border-radius: 6px; }
+    .a-info .menu-title { font-family: var(--mono); font-size: 13px; }
+    .a-info .copy-hint { color: var(--tertiary); font-size: 11px; }
+    .a-info:hover .copy-hint { color: rgba(255, 255, 255, 0.8); }
+
+    /* 2026-08-31: 菜单栏 3×3 点阵图标预览(几何对齐 gui/MenuBarIcon.swift: 画布 18pt, 点半径 1.8pt, 灭点 22%) */
+    .icon-preview {
+      margin: 0 4px 14px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      border: 1px solid var(--separator);
+      border-radius: 10px;
+      background: var(--panel);
+    }
+    .dot-grid { display: grid; grid-template-columns: repeat(3, auto); color: var(--label); }
+    .dot-grid i { display: block; border-radius: 50%; background: currentColor; opacity: 0.22; }
+    .dot-grid i.lit { opacity: 1; }
+    .dot-grid.red { color: var(--danger); }
+    .dot-grid.actual { gap: 1.8px; padding: 1.8px; border-radius: 4px; background: var(--panel-strong); box-shadow: 0 0 0 1px var(--separator); }
+    .dot-grid.actual i { width: 3.6px; height: 3.6px; }
+    .dot-grid.zoom { gap: 5.4px; padding: 5.4px; }
+    .dot-grid.zoom i { width: 10.8px; height: 10.8px; }
+    .icon-note { margin: 0; color: var(--secondary); font-size: 11px; line-height: 1.5; }
+
     .window-a { max-width: 640px; }
     .a-content { padding: 22px 26px 24px; }
     .a-intro { display: flex; align-items: center; gap: 13px; margin-bottom: 22px; }
@@ -608,10 +669,25 @@
     </div>
     <div class="state-controls" id="stateControls" aria-label="Tunnel 状态">
       <span class="state-label">预览状态</span>
+      <button class="state-button" data-tunnel="unconfigured">未配置</button>
       <button class="state-button" data-tunnel="disconnected">未连接</button>
       <button class="state-button" data-tunnel="connecting">连接中</button>
       <button class="state-button" data-tunnel="connected">已连接</button>
-      <button class="state-button" data-tunnel="error">错误</button>
+      <button class="state-button" data-tunnel="disconnecting">断开中</button>
+      <button class="state-button" data-tunnel="reconnecting">重连中</button>
+      <button class="state-button" data-tunnel="repairing">修复中</button>
+      <button class="state-button" data-tunnel="errTimeout">超时</button>
+      <button class="state-button" data-tunnel="errAuth">PIN 有误</button>
+      <button class="state-button" data-tunnel="errCert">证书失败</button>
+      <button class="state-button" data-tunnel="errDropped">掉线</button>
+      <button class="state-button" data-tunnel="errNetworkChanged">网络变化</button>
+      <button class="state-button" data-tunnel="errReconnectFailed">重连失败</button>
+      <button class="state-button" data-tunnel="errRoute">路由失败</button>
+      <button class="state-button" data-tunnel="errStop">断开未完成</button>
+      <span class="state-label" style="margin-left:10px">首行</span>
+      <button class="state-button" data-primary="current">当前色块</button>
+      <button class="state-button" data-primary="minimal">方案1 极简</button>
+      <button class="state-button" data-primary="ondemand">方案3 有事才着色</button>
     </div>
     <button class="theme-button" data-action="toggle-theme">切换深色</button>
   </header>
@@ -644,6 +720,8 @@
     const model = {
       variant: variants.some(v => v.key === requestedVariant) ? requestedVariant : "A",
       tunnel: "disconnected",
+      configured: true,
+      primaryStyle: "current",
       theme: "light",
       autostart: true,
       settingsOpen: true,
@@ -692,18 +770,101 @@
     }
 
     function statusMeta() {
+      // 2026-08-31: 与 gui/MenuPresentation.swift 的 14 态文案逐项对齐;"未配置" = disconnected + !configured。
+      // tone: neutral/busy/connected/error 对应 MenuTone;className 仅供旧 Variant B/C 的 CSS 状态灯使用。
       const states = {
-        disconnected: { label: "未连接", action: "连接", actionLong: "连接 LiteOC", hint: "点击连接", className: "disconnected", ip: "" },
-        connecting: { label: "正在连接…", action: "取消", actionLong: "取消连接", hint: "点击取消", className: "connecting", ip: "" },
-        connected: { label: "已连接", action: "断开", actionLong: "断开 LiteOC", hint: "192.0.2.42", className: "connected", ip: "192.0.2.42" },
-        error: { label: "连接失败", action: "重试", actionLong: "重新连接", hint: "检查网络后重试", className: "error", ip: "" }
+        disconnected: { label: "未连接", action: "连接", actionLong: "连接 LiteOC", hint: "", className: "disconnected", tone: "neutral", ip: "" },
+        connecting: { label: "正在连接…", action: "取消", actionLong: "取消连接", hint: "", className: "connecting", tone: "busy", ip: "" },
+        connected: { label: "已连接", action: "断开", actionLong: "断开 LiteOC", hint: "", className: "connected", tone: "connected", ip: "192.0.2.42" },
+        disconnecting: { label: "正在断开…", action: "", actionLong: "正在断开", hint: "正在清理路由", className: "connecting", tone: "busy", ip: "" },
+        reconnecting: { label: "正在重新连接…", action: "取消", actionLong: "取消重连", hint: "网络已变化", className: "connecting", tone: "busy", ip: "" },
+        repairing: { label: "正在检查残留路由…", action: "", actionLong: "正在修复", hint: "请稍候", className: "connecting", tone: "busy", ip: "" },
+        errTimeout: { label: "连接超时", action: "重试", actionLong: "重新连接", hint: "检查网络", className: "error", tone: "error", ip: "" },
+        errAuth: { label: "PIN 有误", action: "设置", actionLong: "打开设置", hint: "修改 PIN 后重试", className: "error", tone: "error", ip: "" },
+        errCert: { label: "证书获取失败", action: "设置", actionLong: "打开设置", hint: "检查证书指纹", className: "error", tone: "error", ip: "" },
+        errDropped: { label: "连接已断开", action: "重试", actionLong: "重新连接", hint: "", className: "error", tone: "error", ip: "" },
+        errNetworkChanged: { label: "网络已变化", action: "重试", actionLong: "重新连接", hint: "", className: "error", tone: "error", ip: "" },
+        errReconnectFailed: { label: "重连失败", action: "重试", actionLong: "重新连接", hint: "", className: "error", tone: "error", ip: "" },
+        errRoute: { label: "路由清理失败", action: "清理", actionLong: "清理路由", hint: "", className: "error", tone: "error", ip: "" },
+        errStop: { label: "断开未完成", action: "清理", actionLong: "清理路由", hint: "", className: "error", tone: "error", ip: "" }
       };
+      if (!model.configured && model.tunnel === "disconnected") {
+        return { label: "未配置", action: "设置", actionLong: "打开设置", hint: "完成设置后即可连接", className: "error", tone: "neutral", ip: "" };
+      }
       return states[model.tunnel];
     }
 
     function statusDot() {
       const s = statusMeta();
       return `<span class="status-dot ${s.className}" aria-hidden="true"></span>`;
+    }
+
+    // 2026-08-31: 菜单栏点阵图标规格,逐项镜像 gui/MenuBarIcon.swift 的 iconSpec(for:isConfigured:)。
+    // 设计决策:未配置 = 红色 C 形 [0,1,2,3,6,7,8](打破"disconnected 永远全灭"的旧 spec)。
+    function iconSpecFor() {
+      const brandT = [0, 3, 4, 5, 6];
+      const chaseRing = [0, 1, 2, 5, 8, 7, 6, 3];
+      const stat = (lit, red = false) => ({ frames: [lit.slice().sort((a, b) => a - b)], interval: 0, red });
+      if (!model.configured && model.tunnel === "disconnected") return stat([0, 1, 2, 3, 6, 7, 8], true);
+      switch (model.tunnel) {
+        case "disconnected": return stat([]);
+        case "connected": return stat(brandT);
+        case "connecting": {
+          const frames = chaseRing.map((_, head) => [0, 1, 2].map(k => chaseRing[(head - k + chaseRing.length) % chaseRing.length]).sort((a, b) => a - b));
+          return { frames, interval: 300, red: false };
+        }
+        case "disconnecting": {
+          const remaining = new Set(brandT);
+          const frames = [brandT.slice()];
+          for (const dot of [5, 4, 0, 6, 3]) { remaining.delete(dot); frames.push([...remaining].sort((a, b) => a - b)); }
+          return { frames, interval: 400, red: false };
+        }
+        case "reconnecting": return { frames: [brandT, []], interval: 600, red: false };
+        case "repairing": return { frames: [[0, 1, 2], [3, 4, 5], [6, 7, 8]], interval: 350, red: false };
+        case "errTimeout": return stat([0, 1, 2, 4, 6, 7, 8], true);
+        case "errDropped": return stat([0, 2, 3, 5, 6, 8], true);
+        case "errAuth": case "errCert": return stat([1, 3, 4, 5, 6, 7, 8], true);
+        case "errNetworkChanged": case "errReconnectFailed": return stat([0, 1, 2, 3, 5, 6, 7, 8], true);
+        case "errRoute": case "errStop": return stat([0, 2, 4, 6, 8], true);
+      }
+    }
+
+    function iconNoteFor() {
+      const key = (!model.configured && model.tunnel === "disconnected") ? "unconfigured" : model.tunnel;
+      const notes = {
+        unconfigured: "C 形 · 红色 — 等待初始配置(2026-08-31 新增)",
+        disconnected: "全灭(灭点 22% 不透明度始终画出)",
+        connected: "品牌 T ⊢ · 静态",
+        connecting: "外圈顺时针追逐 · 头点+2 拖尾 · 0.3s/帧",
+        disconnecting: "T 逐点坍缩 · 6 帧 · 0.4s/帧",
+        reconnecting: "T 与全灭交替闪烁 · 0.6s/帧",
+        repairing: "三行扫描 · 0.35s/帧",
+        errTimeout: "沙漏 · 红色",
+        errDropped: "断裂双竖 · 红色",
+        errAuth: "锁 · 红色",
+        errCert: "锁 · 红色",
+        errNetworkChanged: "空心环 · 红色",
+        errReconnectFailed: "空心环 · 红色",
+        errRoute: "X · 红色",
+        errStop: "X · 红色"
+      };
+      return notes[key];
+    }
+
+    function dotGrid(sizeClass) {
+      const spec = iconSpecFor();
+      const dots = Array.from({ length: 9 }, (_, i) => `<i class="${spec.frames[0].includes(i) ? "lit" : ""}"></i>`).join("");
+      return `<div class="dot-grid ${sizeClass}${spec.red ? " red" : ""}" data-frames='${JSON.stringify(spec.frames)}' data-interval="${spec.interval}">${dots}</div>`;
+    }
+
+    function iconPreview() {
+      return `
+        <div class="surface-label"><strong>菜单栏图标</strong><code>3×3 点阵 · 镜像 MenuBarIcon.swift</code></div>
+        <div class="icon-preview" aria-label="菜单栏点阵图标预览">
+          ${dotGrid("actual")}
+          ${dotGrid("zoom")}
+          <p class="icon-note">${iconNoteFor()}<br>左:实际尺寸 18pt · 右:3× 放大</p>
+        </div>`;
     }
 
     function trafficLights() {
@@ -782,10 +943,11 @@
         </div>`;
     }
 
-    function commonMenuRows() {
+    function commonMenuRows(maintenanceRows = "") {
       return `
         <button class="menu-row" data-action="open-settings"><span class="grow"><span class="menu-title">设置…</span></span><span class="shortcut">⌘,</span></button>
         <button class="menu-row" data-action="toggle-autostart"><span class="menu-check">${model.autostart ? "✓" : ""}</span><span class="grow"><span class="menu-title">登录时自动启动</span></span></button>
+        ${maintenanceRows}
         <div class="menu-separator"></div>
         <button class="menu-row" data-action="show-about"><span class="grow"><span class="menu-title">关于 LiteOC</span></span></button>
         <a class="menu-row" href="https://github.com/ren2019/LiteOC" target="_blank" rel="noreferrer"><span class="grow"><span class="menu-title">访问 GitHub</span></span><span class="shortcut">↗</span></a>
@@ -796,17 +958,28 @@
 
     function renderVariantA() {
       const s = statusMeta();
+      // 2026-08-31: 连接信息行(对标 Tailscale "This Device"),仅已连接时出现,点击复制 IP。时长已决策不展示(vpnctl 不提供,App 会话外不准)。
+      const infoRow = s.ip ? `
+            <button class="menu-row a-info" data-action="copy-ip">
+              <span class="grow"><span class="menu-title">${s.ip}</span><span class="menu-subtitle">网关 ${escapeHTML(model.config.host)}</span></span>
+              <span class="copy-hint">复制</span>
+            </button>` : "";
+      // 2026-08-31: 调试项全量展示,并入"配置维护"组(菜单顺序决策 A:状态动作/配置维护/关于外链/退出 四段)。
+      const debugRows = `
+        <button class="menu-row" data-action="repair-now"><span class="grow"><span class="menu-title">立即修复</span></span></button>
+        <button class="menu-row" data-action="copy-diagnostics"><span class="grow"><span class="menu-title">复制诊断信息</span></span></button>`;
       const menu = `
         <div class="surface-wrap">
+          ${iconPreview()}
           <div class="surface-label"><strong>菜单栏菜单</strong><code>Variant A</code></div>
           <section class="menu menu-a" aria-label="LiteOC 菜单 A">
-            <button class="menu-row a-primary" data-action="primary">
-              ${statusDot()}
-              <span class="grow"><span class="menu-title">${s.label}${s.ip ? ` · ${s.ip}` : ""}</span><span class="menu-subtitle">${s.hint}</span></span>
-              <span class="action-word">${s.action}</span>
+            <button class="menu-row a-primary tone-${s.tone} style-${model.primaryStyle}${s.action ? "" : " is-disabled"}${!model.configured && model.tunnel === "disconnected" ? " is-unconfigured" : ""}" data-action="primary">
+              <span class="grow"><span class="menu-title">${s.label}</span><span class="menu-subtitle">${s.hint}</span></span>
+              ${s.action ? `<span class="action-word">${s.action}</span>` : ""}
             </button>
+            ${infoRow}
             <div class="menu-separator"></div>
-            ${commonMenuRows()}
+            ${commonMenuRows(debugRows)}
           </section>
         </div>`;
 
@@ -977,7 +1150,12 @@
     function render() {
       document.body.dataset.theme = model.theme;
       document.body.dataset.variant = model.variant;
-      document.querySelectorAll("[data-tunnel]").forEach(button => button.classList.toggle("active", button.dataset.tunnel === model.tunnel));
+      document.querySelectorAll("[data-tunnel]").forEach(button => {
+        const t = button.dataset.tunnel;
+        const active = t === "unconfigured" ? !model.configured : (model.configured && t === model.tunnel);
+        button.classList.toggle("active", active);
+      });
+      document.querySelectorAll("[data-primary]").forEach(button => button.classList.toggle("active", button.dataset.primary === model.primaryStyle));
       document.querySelector("[data-action='toggle-theme']").textContent = model.theme === "light" ? "切换深色" : "切换浅色";
 
       const renderers = { A: renderVariantA, B: renderVariantB, C: renderVariantC };
@@ -989,6 +1167,8 @@
       document.getElementById("stateOutput").textContent = JSON.stringify({
         variant: model.variant,
         tunnel: model.tunnel,
+        configured: model.configured,
+        primaryStyle: model.primaryStyle,
         theme: model.theme,
         settingsOpen: model.settingsOpen,
         activePane: model.variant === "C" ? model.activePane : "single-page",
@@ -1009,16 +1189,13 @@
     }
 
     function runPrimaryAction() {
-      if (model.tunnel === "disconnected" || model.tunnel === "error") {
-        model.tunnel = "connecting";
-        model.lastAction = "发起连接（原型不调用 vpnctl）";
-      } else if (model.tunnel === "connecting") {
-        model.tunnel = "disconnected";
-        model.lastAction = "取消连接";
-      } else {
-        model.tunnel = "disconnected";
-        model.lastAction = "断开连接";
-      }
+      const s = statusMeta();
+      if (!s.action) { model.lastAction = "当前状态无主动作"; render(); return; }
+      if (s.action === "设置") { model.settingsOpen = true; model.lastAction = "打开设置"; }
+      else if (s.action === "连接" || s.action === "重试") { model.tunnel = "connecting"; model.lastAction = "发起连接(原型不调用 vpnctl)"; }
+      else if (s.action === "取消") { model.tunnel = "disconnected"; model.lastAction = "取消连接"; }
+      else if (s.action === "断开") { model.tunnel = "disconnecting"; model.lastAction = "断开连接"; }
+      else if (s.action === "清理") { model.tunnel = "repairing"; model.lastAction = "清理路由"; }
       render();
     }
 
@@ -1041,8 +1218,18 @@
 
       const tunnel = event.target.closest("[data-tunnel]");
       if (tunnel) {
-        model.tunnel = tunnel.dataset.tunnel;
-        model.lastAction = `预览 Tunnel 状态：${model.tunnel}`;
+        const t = tunnel.dataset.tunnel;
+        if (t === "unconfigured") { model.configured = false; model.tunnel = "disconnected"; }
+        else { model.configured = true; model.tunnel = t; }
+        model.lastAction = `预览 Tunnel 状态:${t}`;
+        render();
+        return;
+      }
+
+      const primaryStyleBtn = event.target.closest("[data-primary]");
+      if (primaryStyleBtn) {
+        model.primaryStyle = primaryStyleBtn.dataset.primary;
+        model.lastAction = `首行样式:${model.primaryStyle}`;
         render();
         return;
       }
@@ -1055,6 +1242,15 @@
       if (action === "next-variant") changeVariant(1);
       if (action === "toggle-theme") { model.theme = model.theme === "light" ? "dark" : "light"; model.lastAction = `切换到${model.theme}`; render(); }
       if (action === "primary") runPrimaryAction();
+      if (action === "copy-ip") {
+        const s = statusMeta();
+        if (navigator.clipboard) navigator.clipboard.writeText(s.ip);
+        model.lastAction = `复制 IP ${s.ip}(原型)`;
+        render();
+        toast(`已复制 ${s.ip}(原型;正式版不弹通知,下次打开菜单时副标题显示"已复制")`);
+      }
+      if (action === "repair-now") { model.tunnel = "repairing"; model.lastAction = "手动触发修复"; render(); }
+      if (action === "copy-diagnostics") { model.lastAction = "复制诊断信息(原型)"; render(); toast("诊断信息已复制到剪贴板(原型)"); }
       if (action === "toggle-autostart") { model.autostart = !model.autostart; model.lastAction = `${model.autostart ? "启用" : "关闭"}登录时自动启动`; render(); }
       if (action === "open-settings") { model.settingsOpen = true; model.lastAction = "打开设置"; render(); }
       if (action === "close-settings") { model.settingsOpen = false; model.lastAction = "关闭设置"; render(); }
@@ -1080,6 +1276,8 @@
       document.getElementById("stateOutput").textContent = JSON.stringify({
         variant: model.variant,
         tunnel: model.tunnel,
+        configured: model.configured,
+        primaryStyle: model.primaryStyle,
         theme: model.theme,
         settingsOpen: model.settingsOpen,
         activePane: model.variant === "C" ? model.activePane : "single-page",
@@ -1097,6 +1295,21 @@
     });
 
     render();
+
+    // 点阵图标动画:ticker 驱动多帧图标(connecting/disconnecting/reconnecting/repairing)。
+    setInterval(() => {
+      document.querySelectorAll(".dot-grid[data-interval]").forEach(grid => {
+        const interval = Number(grid.dataset.interval);
+        if (!interval) return;
+        grid._elapsed = (grid._elapsed || 0) + 150;
+        if (grid._elapsed < interval) return;
+        grid._elapsed = 0;
+        const frames = JSON.parse(grid.dataset.frames);
+        grid._frame = ((grid._frame || 0) + 1) % frames.length;
+        const lit = frames[grid._frame];
+        grid.querySelectorAll("i").forEach((dot, i) => dot.classList.toggle("lit", lit.includes(i)));
+      });
+    }, 150);
   </script>
 </body>
 </html>

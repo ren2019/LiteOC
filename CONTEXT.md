@@ -19,3 +19,6 @@
 - **Release Note**:中英文说明本次发布变化的用户正文,包含结果摘要、用户可感知变化、验证结果和完整变更链接。它是 Release Gate 的必需输入,不能退化成只有版本比较链接的自动摘要。
 - **CI Artifact**:PR 或主分支构建产生的非发布安装包,只证明构建与打包链路可用,不代表 Release。
 - **Post-release Acceptance**:Release 生成后的本机下载安装与启动检查。Release Run 默认包含且默认不建立真实 VPN 连接;用户可用自然语言明确表达跳过或扩大验收的意图;不属于 Release Gate。
+- **Connection Info Row(连接信息行)**:托盘菜单中仅 Connected 态出现的信息项,内容 = 隧道 IP + Gateway。点击 = 复制 IP;不发系统通知,下次打开菜单时副标题短暂显示"已复制到剪贴板"作为确认。
+- **Debug Items(调试项)**:托盘菜单中常驻展示的两个维护动作——"立即修复"(手动触发 Root Helper 的 repair)与"复制诊断信息"(状态 + Network Fingerprint + 最近错误)。不做 Option 等修饰键隐藏。
+- **菜单栏点阵图标语义**:3×3 点阵。Disconnected(已配置) = 全灭;Disconnected(未配置) = 红色 C 形(对"disconnected 无论配置与否全灭"旧规则的显式例外,2026-08-31);Connected = 品牌 T;Connecting / Disconnecting / Reconnecting / Repairing = 动画;各 Error = 红色静态图案。
