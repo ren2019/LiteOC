@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<!--
+  PROTOTYPE (throwaway) — liteoc 九宫格菜单栏图标状态预览
+  问题: 14 个 TunnelState 各自的 3x3 点阵图标看起来对不对?
+  用法: 双击在浏览器打开; ←/→ 或底部条逐个切换状态; 右上切明暗菜单栏; 中间可换品牌图案。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE · liteoc 九宫格图标</title>
+<style>
+  :root { --bg:#f2f2f4; --card:#fff; --ink:#1d1d1f; --sub:#86868b; --line:#e3e3e6; }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:-apple-system,"PingFang SC",sans-serif; background:var(--bg); color:var(--ink);
+         min-height:100vh; display:flex; flex-direction:column; align-items:center; padding:28px 16px 120px; }
+  .tag { font-size:11px; letter-spacing:.12em; color:#b00; border:1px solid #b00; border-radius:4px;
+         padding:2px 8px; margin-bottom:14px; }
+  h1 { font-size:17px; font-weight:600; margin-bottom:20px; }
+
+  /* fake macOS menu bar */
+  .menubar { width:min(680px,100%); height:30px; border-radius:8px; display:flex; align-items:center;
+             justify-content:flex-end; gap:14px; padding:0 12px; box-shadow:0 1px 4px rgba(0,0,0,.15);
+             transition:background .25s; }
+  .menubar.light { background:rgba(255,255,255,.82); color:#333; }
+  .menubar.dark  { background:rgba(30,30,32,.88); color:#eee; }
+  .menubar .sys { font-size:12px; opacity:.75; }
+  .mbicon { width:20px; height:20px; display:grid; place-items:center; }
+  .mbicon svg { width:18px; height:18px; display:block; }
+  .modebtn { margin-left:10px; font-size:11px; border:1px solid currentColor; border-radius:4px;
+             background:none; color:inherit; padding:1px 7px; cursor:pointer; opacity:.7; }
+
+  .stage { display:flex; gap:36px; align-items:flex-start; margin-top:30px; flex-wrap:wrap; justify-content:center; }
+  .preview { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:26px 30px;
+             text-align:center; min-width:280px; }
+  .preview svg.big { width:170px; height:170px; }
+  .s-title { font-size:16px; font-weight:600; margin-top:14px; }
+  .s-sub   { font-size:12.5px; color:var(--sub); margin-top:3px; min-height:16px; }
+  .s-meta  { font-size:11.5px; color:var(--sub); margin-top:10px; font-family:ui-monospace,Menlo,monospace; }
+  .s-action{ display:inline-block; margin-top:8px; font-size:12px; border:1px solid var(--line);
+             border-radius:6px; padding:2px 12px; color:var(--sub); }
+
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px;
+           width:300px; max-height:560px; overflow:auto; }
+  .panel h2 { font-size:12px; color:var(--sub); font-weight:600; margin:10px 0 6px; }
+  .panel h2:first-child { margin-top:0; }
+  .srow { display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:8px; cursor:pointer; }
+  .srow:hover { background:#f5f5f7; }
+  .srow.active { background:#e8e8ed; }
+  .srow svg { width:22px; height:22px; flex:none; }
+  .srow .nm { font-size:13px; }
+  .srow .cd { font-size:10.5px; color:var(--sub); font-family:ui-monospace,Menlo,monospace; }
+
+  .markbar { display:flex; gap:8px; margin-top:22px; align-items:center; font-size:12px; color:var(--sub); }
+  .markbar button { border:1px solid var(--line); background:var(--card); border-radius:8px; padding:4px 6px;
+                    cursor:pointer; }
+  .markbar button.active { outline:2px solid #0a84ff; }
+  .markbar svg { width:26px; height:26px; display:block; }
+
+  .appicons { display:flex; align-items:flex-end; gap:18px; flex-wrap:wrap; }
+  .appicons figure { text-align:center; font-size:11px; color:var(--sub); }
+  .appicons svg { display:block; margin-bottom:4px; }
+
+  /* floating switcher */
+  .switcher { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); display:flex; gap:14px;
+              align-items:center; background:#1d1d1f; color:#fff; border-radius:999px; padding:10px 18px;
+              box-shadow:0 6px 24px rgba(0,0,0,.3); font-size:13px; user-select:none; z-index:9; }
+  .switcher .arrow { cursor:pointer; font-size:16px; padding:2px 10px; border-radius:999px; }
+  .switcher .arrow:hover { background:rgba(255,255,255,.15); }
+  .switcher .lbl { min-width:210px; text-align:center; }
+  .switcher .lbl small { opacity:.55; display:block; font-size:10.5px; font-family:ui-monospace,Menlo,monospace; }
+</style>
+</head>
+<body>
+<div class="tag">PROTOTYPE · throwaway</div>
+<h1>liteoc 菜单栏九宫格图标 · 逐状态预览</h1>
+
+<div class="menubar light" id="menubar">
+  <span class="sys">Control Center&nbsp;&nbsp;Wi‑Fi&nbsp;&nbsp;Battery</span>
+  <span class="mbicon" id="mbIcon"></span>
+  <span class="sys" id="clock"></span>
+  <button class="modebtn" id="modeBtn">深色</button>
+</div>
+
+<div class="stage">
+  <div class="preview">
+    <span id="bigIcon"></span>
+    <div class="s-title" id="sTitle"></div>
+    <div class="s-sub" id="sSub"></div>
+    <div class="s-action" id="sAction"></div>
+    <div class="s-meta" id="sMeta"></div>
+  </div>
+  <div class="panel" id="panel"></div>
+</div>
+
+<div class="markbar">
+  品牌图案(connected):
+  <span id="marks"></span>
+  &nbsp;&nbsp;点形:
+  <span id="shapes"></span>
+</div>
+
+<div class="panel" style="width:min(680px,100%); margin-top:26px;">
+  <h2>App 图标(Dock)— C 形九宫格 [0,1,2,3,6,7,8] = liteOC</h2>
+  <div class="appicons" id="appIcons"></div>
+  <div class="markbar" style="margin-top:12px;">
+    底板暗点: <span id="appBase"></span>
+    &nbsp;&nbsp;背景: <span id="appBg"></span>
+  </div>
+</div>
+
+<div class="switcher">
+  <span class="arrow" id="prev">‹</span>
+  <span class="lbl" id="swLabel"></span>
+  <span class="arrow" id="next">›</span>
+</div>
+
+<script>
+// ---------- 几何: 与 Tailscale 同法则 —— 点半径 r=1, 间距 3r, 边距 1r, 画布 10r ----------
+const C = [2,5,8]; // 每轴三个圆心
+const idx = (x,y)=> y*3+x;
+
+// ---------- 品牌图案候选 ----------
+const MARKS = {
+  tee:    [0,3,4,5,6],        // ⊢ 旋转90°的T: 第一列 + 第二行
+  up:     [1,3,4,5],          // 上箭头
+  down:   [3,4,5,7],          // 下箭头(Tailscale 式)
+};
+let markName = 'tee';
+
+// ---------- 点形候选 (与 Tailscale 圆点拉开差异) ----------
+const SHAPES = {
+  circle:  { label:'圆形(≈Tailscale)', r:1,    rx:null },
+  rounded: { label:'圆角方块',          r:0.92, rx:0.38 },
+  square:  { label:'方块',             r:0.88, rx:0 },
+};
+let shapeName = 'circle';
+
+// ---------- 帧生成 ----------
+const PERIMETER = [0,1,2,5,8,7,6,3];       // 顺时针外圈
+function chaseFrames(){                    // connecting: 亮点+2格拖尾 绕圈
+  return PERIMETER.map((_,i)=> [0,1,2].map(k=> PERIMETER[(i-k+8)%8]));
+}
+function collapseFrames(mark){             // disconnecting: T 横臂先收回(右→左), 脊柱再消散
+  const custom = { tee: [5,4,0,6,3] }[markName];
+  const byRow = custom || [...mark].sort((a,b)=> Math.floor(a/3)-Math.floor(b/3) || (a%3)-(b%3));
+  const frames=[];
+  for(let k=0;k<=byRow.length;k++) frames.push(byRow.slice(k));
+  return frames;
+}
+function blinkFrames(mark){ return [mark, []]; }         // reconnecting: 整体闪烁
+function scanFrames(){ return [[0,1,2],[3,4,5],[6,7,8]]; } // repairing: 横行扫描
+
+// ---------- 错误图案 (按常见度分组, 红色) ----------
+const ERR = {
+  timeout: [0,1,2,4,6,7,8],        // 沙漏: 上排+中心+下排 — 超时
+  dropped: [0,2,3,5,6,8],          // 断裂: 左右两竖, 中间空 — 掉线
+  credential: [1,3,4,5,6,7,8],     // 锁: 顶中锁鼻 + 下部锁体 — PIN/证书
+  network:  [0,1,2,3,5,6,7,8],     // 空心环: 中心缺失 — 网络变化/重连失败
+  cleanup:  [0,2,4,6,8],           // X: 对角线 — 路由/停止清理失败
+};
+
+// ---------- 状态表 (对应 gui/MenuPresentation.swift) ----------
+const STATES = [
+ {id:'repairing',         grp:'忙态', title:'正在检查残留路由…', sub:'请稍候',        act:'—',    anim:'scan',     ms:350},
+ {id:'disconnected',      grp:'正常', title:'未连接',            sub:'',             act:'连接', lit:[]},
+ {id:'notConfigured',     grp:'正常', title:'未配置',            sub:'完成设置后即可连接', act:'设置', lit:[]},
+ {id:'connecting',        grp:'忙态', title:'正在连接…',         sub:'',             act:'取消', anim:'chase',    ms:300},
+ {id:'disconnecting',     grp:'忙态', title:'正在断开…',         sub:'正在清理路由',  act:'—',    anim:'collapse', ms:400},
+ {id:'connected',         grp:'正常', title:'已连接',            sub:'100.64.0.1',   act:'断开', lit:'MARK'},
+ {id:'reconnecting',      grp:'忙态', title:'正在重新连接…',     sub:'网络已变化',    act:'取消', anim:'blink',    ms:600},
+ {id:'errTimeout',        grp:'错误', title:'连接超时',          sub:'检查网络',      act:'重试', lit:ERR.timeout, red:1},
+ {id:'errDropped',        grp:'错误', title:'连接已断开',        sub:'',             act:'重试', lit:ERR.dropped, red:1},
+ {id:'errNetworkChanged', grp:'错误', title:'网络已变化',        sub:'',             act:'重试', lit:ERR.network, red:1},
+ {id:'errReconnectFailed',grp:'错误', title:'重连失败',          sub:'',             act:'重试', lit:ERR.network, red:1},
+ {id:'errRoute',          grp:'错误', title:'路由清理失败',      sub:'',             act:'清理', lit:ERR.cleanup, red:1},
+ {id:'errStop',           grp:'错误', title:'断开未完成',        sub:'',             act:'清理', lit:ERR.cleanup, red:1},
+ {id:'errAuth',           grp:'错误', title:'PIN 有误',          sub:'修改 PIN 后重试', act:'设置', lit:ERR.credential, red:1},
+ {id:'errCert',           grp:'错误', title:'证书获取失败',      sub:'检查证书指纹',  act:'设置', lit:ERR.credential, red:1},
+];
+let cur = 0, frame = 0, timer = null;
+
+// ---------- 渲染一个九宫格 ----------
+function gridSVG(litSet, opts={}){
+  const color = opts.red ? '#E5563C' : 'currentColor';
+  const sh = SHAPES[shapeName];
+  let s = `<svg viewBox="0 0 10 10" class="${opts.big?'big':''}" style="color:${color}">`;
+  for(let y=0;y<3;y++) for(let x=0;x<3;x++){
+    const on = litSet.has(idx(x,y));
+    const op = on?1:0.22;
+    if(sh.rx===null){
+      s += `<circle cx="${C[x]}" cy="${C[y]}" r="${sh.r}" fill="currentColor" opacity="${op}"/>`;
+    } else {
+      s += `<rect x="${C[x]-sh.r}" y="${C[y]-sh.r}" width="${2*sh.r}" height="${2*sh.r}" rx="${sh.rx}" fill="currentColor" opacity="${op}"/>`;
+    }
+  }
+  return s+'</svg>';
+}
+function framesFor(st){
+  const mark = MARKS[markName];
+  if(st.anim==='chase')    return chaseFrames();
+  if(st.anim==='collapse') return collapseFrames(mark);
+  if(st.anim==='blink')    return blinkFrames(mark);
+  if(st.anim==='scan')     return scanFrames();
+  const lit = st.lit==='MARK' ? mark : (st.lit||[]);
+  return [lit];
+}
+
+// ---------- 状态切换 ----------
+function show(i){
+  cur = (i+STATES.length)%STATES.length;
+  frame = 0;
+  const st = STATES[cur];
+  document.getElementById('sTitle').textContent = st.title;
+  document.getElementById('sSub').textContent   = st.sub;
+  document.getElementById('sAction').textContent= st.act==='—' ? '(无动作)' : st.act;
+  document.getElementById('sMeta').textContent  = `TunnelState.${st.id}` + (st.anim?` · ${st.anim} ${st.ms}ms/帧`:' · 静态');
+  document.getElementById('swLabel').innerHTML  = `${st.title}<small>${st.id} · ${cur+1}/${STATES.length}</small>`;
+  document.querySelectorAll('.srow').forEach((el,k)=> el.classList.toggle('active', k===cur));
+  clearInterval(timer);
+  const frames = framesFor(st);
+  const paint = ()=>{
+    const lit = new Set(frames[frame % frames.length]);
+    document.getElementById('bigIcon').innerHTML = gridSVG(lit, {big:1, red:st.red});
+    document.getElementById('mbIcon').innerHTML  = gridSVG(lit, {red:st.red});
+    frame++;
+  };
+  paint();
+  if(frames.length>1) timer = setInterval(paint, st.ms);
+}
+
+// ---------- 侧栏 ----------
+function buildPanel(){
+  const panel = document.getElementById('panel');
+  let html='', lastGrp='';
+  STATES.forEach((st,i)=>{
+    if(st.grp!==lastGrp){ html+=`<h2>${st.grp}</h2>`; lastGrp=st.grp; }
+    const lit = new Set(st.lit==='MARK' ? MARKS[markName] : (st.lit||[]));
+    html += `<div class="srow" data-i="${i}">${gridSVG(lit,{red:st.red})}
+             <span><span class="nm">${st.title}</span><br><span class="cd">${st.id}</span></span></div>`;
+  });
+  panel.innerHTML = html;
+  panel.querySelectorAll('.srow').forEach(el=> el.onclick = ()=> show(+el.dataset.i));
+}
+
+// ---------- 品牌图案选择 ----------
+function buildMarks(){
+  const host = document.getElementById('marks');
+  host.innerHTML = '';
+  Object.keys(MARKS).forEach(name=>{
+    const b = document.createElement('button');
+    b.innerHTML = gridSVG(new Set(MARKS[name]));
+    b.title = name;
+    if(name===markName) b.classList.add('active');
+    b.onclick = ()=>{ markName=name;
+      host.querySelectorAll('button').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active'); show(cur); };
+    host.appendChild(b);
+  });
+}
+
+// ---------- 点形选择 ----------
+(function buildShapes(){
+  const host = document.getElementById('shapes');
+  Object.keys(SHAPES).forEach(name=>{
+    const b = document.createElement('button');
+    b.textContent = SHAPES[name].label;
+    b.style.fontSize = '11px';
+    if(name===shapeName) b.classList.add('active');
+    b.onclick = ()=>{ shapeName=name;
+      host.querySelectorAll('button').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+      buildPanel(); buildMarks(); show(cur); };
+    host.appendChild(b);
+  });
+})();
+buildPanel(); buildMarks();
+
+// ---------- App 图标: C 形九宫格 ----------
+const C_MARK = [0,1,2,3,6,7,8];   // 第一列 + 顶行 + 底行 = "C" (liteOC)
+let appBase = true, appBg = 'dark';
+function appIconSVG(px, gid){
+  // 画布 14×14: squircle rx≈22.4%, 圆心 4/7/10, r=1, 点阵居中(边距均 3)
+  const CC = [4,7,10];
+  let bg;
+  if(appBg==='green'){
+    bg = `<defs><linearGradient id="${gid}" x1="0" y1="1" x2="1" y2="0">`
+       + `<stop offset="0" stop-color="#16A34A"/><stop offset="1" stop-color="#14532D"/></linearGradient></defs>`
+       + `<rect width="14" height="14" rx="3.13" fill="url(#${gid})"/>`;
+  } else {
+    bg = `<rect width="14" height="14" rx="3.13" fill="#1d1d1f"/>`;
+  }
+  let dots='';
+  for(let y=0;y<3;y++) for(let x=0;x<3;x++){
+    const lit = C_MARK.includes(y*3+x);
+    if(!lit && !appBase) continue;
+    dots += `<circle cx="${CC[x]}" cy="${CC[y]}" r="1" fill="#fff" opacity="${lit?1:0.22}"/>`;
+  }
+  return `<svg width="${px}" height="${px}" viewBox="0 0 14 14">${bg}${dots}</svg>`;
+}
+function renderAppIcons(){
+  document.getElementById('appIcons').innerHTML = [256,128,64,32,16]
+    .map(px=>`<figure>${appIconSVG(px,'g'+px)}<figcaption>${px}px</figcaption></figure>`).join('');
+}
+function toggleBtn(host, labels, get, set){
+  const el = document.getElementById(host);
+  el.innerHTML='';
+  labels.forEach(([name,label])=>{
+    const b=document.createElement('button');
+    b.textContent=label; b.style.fontSize='11px';
+    if(get()===name) b.classList.add('active');
+    b.onclick=()=>{ set(name); renderAppIcons(); toggleAll(); };
+    el.appendChild(b);
+  });
+}
+function toggleAll(){
+  toggleBtn('appBase', [[true,'有(同菜单栏语法)'],[false,'无(仅 C)']], ()=>appBase, v=>appBase=v);
+  toggleBtn('appBg',   [['green','绿渐变(沿用)'],['dark','深色']], ()=>appBg, v=>appBg=v);
+}
+toggleAll(); renderAppIcons();
+
+// ---------- 明暗菜单栏 ----------
+document.getElementById('modeBtn').onclick = (e)=>{
+  const bar = document.getElementById('menubar');
+  bar.classList.toggle('dark'); bar.classList.toggle('light');
+  e.target.textContent = bar.classList.contains('dark') ? '浅色' : '深色';
+};
+document.getElementById('clock').textContent =
+  new Date().toLocaleString('zh-CN',{weekday:'short',hour:'2-digit',minute:'2-digit'});
+
+// ---------- 切换条 + 键盘 ----------
+document.getElementById('prev').onclick = ()=> show(cur-1);
+document.getElementById('next').onclick = ()=> show(cur+1);
+document.addEventListener('keydown', e=>{
+  if(/INPUT|TEXTAREA/.test(e.target.tagName)) return;
+  if(e.key==='ArrowLeft') show(cur-1);
+  if(e.key==='ArrowRight') show(cur+1);
+});
+
+show(0);
+</script>
+</body>
+</html>
