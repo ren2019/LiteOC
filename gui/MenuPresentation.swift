@@ -18,7 +18,8 @@ enum PrimaryMenuLayout {
     static let height: CGFloat = 46
     /// 自定义 view 初始宽: 仅作菜单内容最小宽参考, NSMenu 展开时拉伸到菜单宽 (menu.minimumWidth 兜底)。
     static let initialViewWidth: CGFloat = 160
-    static let horizontalInset: CGFloat = 10
+    /// 与标准 NSMenuItem 文字缩进对齐 (实测系统菜单文字距菜单边缘约 15pt)。
+    static let horizontalInset: CGFloat = 15
     static let actionWidth: CGFloat = 40
     static let spacing: CGFloat = 8
 }
