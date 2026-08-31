@@ -36,22 +36,15 @@ if ! iconutil -c icns AppIcon.iconset -o AppIcon.icns; then
   run_swift make_icns.swift
 fi
 
-echo "→ 生成菜单栏图标 (彩色/灰色)…"
-run_swift make_menubar.swift
-
 echo "→ 编译 Swift…"
 mkdir -p "$BINDIR"
-run_swiftc -parse-as-library main.swift AppConfig.swift MenuPresentation.swift VpnctlClient.swift TunnelReducer.swift TunnelPolling.swift -o "$BINDIR/$APPNAME" -framework Cocoa -framework ServiceManagement
+run_swiftc -parse-as-library main.swift AppConfig.swift MenuPresentation.swift MenuBarIcon.swift VpnctlClient.swift TunnelReducer.swift TunnelPolling.swift -o "$BINDIR/$APPNAME" -framework Cocoa -framework ServiceManagement
 
 echo "→ 打包 .app …"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BINDIR/$APPNAME" "$APP/Contents/MacOS/$APPNAME"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-cp menubar_color.png "$APP/Contents/Resources/menubar_color.png"
-cp menubar_gray.png "$APP/Contents/Resources/menubar_gray.png"
-cp menubar_red.png "$APP/Contents/Resources/menubar_red.png"
-cp menubar_yellow.png "$APP/Contents/Resources/menubar_yellow.png"
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

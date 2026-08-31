@@ -5,7 +5,7 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MAIN="$ROOT/gui/main.swift"
 BUILD="$ROOT/gui/build.sh"
-MENUBAR_GENERATOR="$ROOT/gui/make_menubar.swift"
+ICON_MODEL="$ROOT/gui/MenuBarIcon.swift"
 
 pass=0
 fail=0
@@ -56,19 +56,23 @@ check_contains "formal entry point owns main()" "static func main()" "$MAIN"
 check_absent "main.swift has no top-level app.run()" '^app\.run\(\)$' "$MAIN"
 check_contains "Swift build enables the formal entry point" "-parse-as-library" "$BUILD"
 
-check_contains "status item uses the native spinner" "NSProgressIndicator" "$MAIN"
-check_contains "native spinner uses spinning style" ".style = .spinning" "$MAIN"
-check_contains "native spinner uses small control size" ".controlSize = .small" "$MAIN"
-check_contains "native spinner is embedded in the status button" ".addSubview(spinner)" "$MAIN"
-check_contains "native spinner control follows phase transitions" \
-  "spinnerAnimationAction(from: previousState, to: state)" "$MAIN"
-check_absent "native spinner keeps the system default color" \
-  'spinner\.(contentTintColor|appearance)|spinner\.layer' "$MAIN"
+check_contains "status item icon comes from the pure dot-matrix icon model" \
+  "iconSpec(for: state, isConfigured:" "$MAIN"
+check_contains "icon model module is pure logic over TunnelState" \
+  "func iconSpec(for state: TunnelState, isConfigured: Bool) -> IconSpec" "$ICON_MODEL"
+check_contains "dots are rendered at runtime with a drawing handler" \
+  "renderDotIcon(lit:" "$MAIN"
+check_contains "busy-state animation advances frames on its own timer" \
+  "#selector(iconFrameTick)" "$MAIN"
+check_absent "the native spinner is gone" 'NSProgressIndicator|spinner' "$MAIN"
+check_absent "the reconnecting blink timer is gone" 'blinkTimer|blinkTick|blinkVisible' "$MAIN"
+check_absent "old menubar PNG loading is gone" 'loadImg|menubar_(gray|color|red|yellow)' "$MAIN"
 check_absent "hand-rolled frame spinner machinery is gone" \
   'spinnerFrames|spinStep|spinTimer|loadSpinnerFrames|rotateImg|spinTick|startSpin|stopSpin' "$MAIN"
 check_absent "dead Swift APPNAME and pinGet shims are gone" '\bAPPNAME\b|\bpinGet\b' "$MAIN"
-check_absent "spinner asset is no longer referenced by App packaging" 'menubar_spinner' "$BUILD"
-check_absent "spinner asset is no longer generated" 'menubar_spinner' "$MENUBAR_GENERATOR"
+check_contains "App build links the icon model module" "MenuBarIcon.swift" "$BUILD"
+check_absent "menubar PNG assets are no longer packaged" 'menubar_(gray|color|red|yellow|spinner)' "$BUILD"
+check_absent "menubar PNG generator is no longer invoked" 'make_menubar' "$BUILD"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" = 0 ]

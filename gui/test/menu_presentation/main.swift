@@ -120,30 +120,4 @@ checkValue(
     false
 )
 
-checkValue(
-    "entering Connecting starts the native spinner once",
-    spinnerAnimationAction(from: .disconnected, to: .connecting),
-    .start
-)
-checkValue(
-    "remaining Connecting leaves native animation uninterrupted",
-    spinnerAnimationAction(from: .connecting, to: .connecting),
-    .none
-)
-checkValue(
-    "leaving Connecting for Connected stops the native spinner",
-    spinnerAnimationAction(from: .connecting, to: .connected),
-    .stop
-)
-checkValue(
-    "leaving Connecting for an error stops the native spinner",
-    spinnerAnimationAction(from: .connecting, to: .errTimeout),
-    .stop
-)
-checkValue(
-    "non-Connecting transitions do not touch spinner animation",
-    spinnerAnimationAction(from: .connected, to: .disconnected),
-    .none
-)
-
 print("\n\(passed) passed")

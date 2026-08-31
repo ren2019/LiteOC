@@ -48,6 +48,28 @@ func pinSet(_ service: String, _ v: String) {
     run("/usr/bin/security", ["add-generic-password", "-s", service, "-a", AppConfig.keychainAccount, "-w", v, "-T", "/usr/bin/security", "-U"])
 }
 
+// ---- 菜单栏九宫格点阵图标渲染 (AppKit) ----
+func renderDotIcon(lit: Set<Int>, isErrorRed: Bool) -> NSImage {
+    let size = MenuBarIconGeometry.canvas
+    let r = MenuBarIconGeometry.dotRadius
+    let base: NSColor = isErrorRed ? .systemRed : .black  // template 图只取 alpha 通道
+    let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { _ in
+        for index in 0..<9 {
+            let column = CGFloat(index % 3)
+            let row = CGFloat(index / 3)
+            // 外边距 1r: 原点起于 r, 圆心落在 2r/5r/8r, 点阵在 10r 画布居中。
+            // flipped: false 时 y 轴向上, 让索引 0/1/2 落在顶行。
+            let origin = CGPoint(x: r + column * 3 * r, y: size - 3 * r - row * 3 * r)
+            let alpha: CGFloat = lit.contains(index) ? 1 : MenuBarIconGeometry.dimAlpha
+            base.withAlphaComponent(alpha).setFill()
+            NSBezierPath(ovalIn: NSRect(origin: origin, size: NSSize(width: 2 * r, height: 2 * r))).fill()
+        }
+        return true
+    }
+    image.isTemplate = !isErrorRed
+    return image
+}
+
 // ---- 菜单主状态项 ----
 final class PrimaryMenuItemView: NSView {
     private let dot = NSTextField(labelWithString: "○")
@@ -398,13 +420,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var item: NSStatusItem!
     var primaryMenuView: PrimaryMenuItemView!
     var autostartItem: NSMenuItem!
-    var colorImg: NSImage!
-    var grayImg: NSImage!
-    var redImg: NSImage!
-    var yellowImg: NSImage!
-    var blinkTimer: Timer?
-    var blinkVisible = true
-    var spinner: NSProgressIndicator!
+    var currentIconSpec: IconSpec?
+    var iconFrameIndex = 0
+    var iconAnimationTimer: Timer?
     var reducerContext: TunnelReducer.Context = .init(
         phase: .disconnected,
         downStreak: 0,
@@ -434,11 +452,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var service = "LiteOC"
     var configWin: ConfigWindow?
 
-    func loadImg(_ name: String, template: Bool = false) -> NSImage {
-        let p = Bundle.main.path(forResource: name, ofType: "png") ?? ""
-        let i = NSImage(contentsOfFile: p) ?? NSImage(); i.isTemplate = template; i.size = NSSize(width: 18, height: 18)
-        return i
-    }
     func reloadConfig() { service = loadConfig()["KEYCHAIN_SERVICE"] ?? "LiteOC" }
     func currentMenuPresentation() -> MenuPresentation {
         let isConfigured = effectiveProfileIsConfigured(
@@ -450,23 +463,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func updatePrimaryMenu() { primaryMenuView?.update(currentMenuPresentation()) }
     func applicationDidFinishLaunching(_ n: Notification) {
         ensureConfig(); reloadConfig()
-        colorImg = loadImg("menubar_color"); grayImg = loadImg("menubar_gray", template: true); redImg = loadImg("menubar_red"); yellowImg = loadImg("menubar_yellow")
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.imagePosition = .imageOnly; item.button?.image = grayImg
-        spinner = NSProgressIndicator()
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        if let button = item.button {
-            button.addSubview(spinner)
-            NSLayoutConstraint.activate([
-                spinner.centerXAnchor.constraint(equalTo: button.centerXAnchor),
-                spinner.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-                spinner.widthAnchor.constraint(equalToConstant: 16),
-                spinner.heightAnchor.constraint(equalToConstant: 16)
-            ])
-        }
+        item.button?.imagePosition = .imageOnly
+        applyIconSpec(iconSpec(for: state, isConfigured: effectiveProfileIsConfigured(
+            loadConfig(), missingConfigFields: helperMissingConfigFields)))
 
         let menu = NSMenu(); menu.autoenablesItems = false
         primaryMenuView = PrimaryMenuItemView(
@@ -617,7 +617,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func apply(_ result: TunnelReducer.Result, snapshot: StatusSnapshot? = nil) {
-        let previousState = state
         if result.state != reducerContext {
             networkReader.invalidate()
         }
@@ -627,7 +626,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else if state != .connected {
             connectedIP = ""
         }
-        updateStatePresentation(from: previousState)
+        updateStatePresentation()
         interpret(result.effects)
     }
 
@@ -640,50 +639,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         RunLoop.main.add(t, forMode: .common); timer = t
     }
 
-    // 重连黄灯闪烁: 静态黄图标定时显隐,离开 reconnecting 即停 (issue #24)。
-    @objc func blinkTick() {
-        blinkVisible.toggle()
-        item.button?.image = blinkVisible ? yellowImg : nil
+    // 菜单栏九宫格点阵图标: 状态变化即重新取 IconSpec; 动画态用 Timer 循环帧。
+    @objc func iconFrameTick() {
+        guard let spec = currentIconSpec, spec.isAnimated else { return }
+        iconFrameIndex = (iconFrameIndex + 1) % spec.frames.count
+        showIconFrame()
     }
 
-    func updateStatePresentation(from previousState: TunnelState) {
-        if state == .reconnecting {
-            if blinkTimer == nil {
-                blinkVisible = true
-                item.button?.image = yellowImg
-                blinkTimer = Timer(timeInterval: 0.6, target: self, selector: #selector(blinkTick), userInfo: nil, repeats: true)
-                RunLoop.main.add(blinkTimer!, forMode: .common)
-            }
-        } else if blinkTimer != nil {
-            blinkTimer?.invalidate(); blinkTimer = nil; blinkVisible = true
+    func showIconFrame() {
+        guard let spec = currentIconSpec else { return }
+        item.button?.image = renderDotIcon(lit: Set(spec.frames[iconFrameIndex]), isErrorRed: spec.isErrorRed)
+    }
+
+    func applyIconSpec(_ spec: IconSpec) {
+        guard spec != currentIconSpec else { return }
+        currentIconSpec = spec
+        iconFrameIndex = 0
+        iconAnimationTimer?.invalidate(); iconAnimationTimer = nil
+        showIconFrame()
+        if spec.isAnimated {
+            let t = Timer(timeInterval: spec.frameInterval, target: self, selector: #selector(iconFrameTick), userInfo: nil, repeats: true)
+            RunLoop.main.add(t, forMode: .common)
+            iconAnimationTimer = t
         }
-        switch spinnerAnimationAction(from: previousState, to: state) {
-        case .start:
-            spinner.startAnimation(nil)
-        case .stop:
-            spinner.stopAnimation(nil)
-        case .none:
-            break
-        }
-        if state != .reconnecting {
-            switch state {
-            case .repairing:
-                item.button?.image = grayImg
-            case .disconnected:
-                item.button?.image = grayImg
-            case .connecting:
-                item.button?.image = nil
-            case .disconnecting:
-                item.button?.image = grayImg
-            case .reconnecting:
-                break
-            case .connected:
-                item.button?.image = colorImg
-            case .errTimeout, .errAuth, .errCert, .errDropped, .errRoute, .errStop,
-                 .errNetworkChanged, .errReconnectFailed:
-                item.button?.image = redImg
-            }
-        }
+    }
+
+    func updateStatePresentation() {
+        applyIconSpec(iconSpec(for: state, isConfigured: effectiveProfileIsConfigured(
+            loadConfig(), missingConfigFields: helperMissingConfigFields)))
         updatePrimaryMenu()
         reschedule()
     }

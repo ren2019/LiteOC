@@ -13,16 +13,6 @@ enum MenuTone: Equatable {
     case neutral, busy, connected, error
 }
 
-enum SpinnerAnimationAction: Equatable {
-    case none, start, stop
-}
-
-func spinnerAnimationAction(from previous: TunnelState, to current: TunnelState) -> SpinnerAnimationAction {
-    if previous != .connecting, current == .connecting { return .start }
-    if previous == .connecting, current != .connecting { return .stop }
-    return .none
-}
-
 enum PrimaryMenuLayout {
     static let width: CGFloat = 272
     static let height: CGFloat = 46

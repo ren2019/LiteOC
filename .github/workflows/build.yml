@@ -33,6 +33,7 @@ jobs:
           sh gui/test/app_config_test.sh
           sh gui/test/config_fixture_test.sh
           sh gui/test/menu_presentation_test.sh
+          sh gui/test/menu_bar_icon_test.sh
           sh gui/test/vpnctl_client_test.sh
           sh gui/test/tunnel_reducer_test.sh
           sh gui/test/tunnel_events_test.sh
