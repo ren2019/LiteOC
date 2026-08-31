@@ -1,39 +1,41 @@
-# LiteOC v1.11
+# LiteOC v1.12
 
 ## 中文
 
-LiteOC v1.11 把状态栏与 Dock 图标全面换成九宫格点阵语言：3×3 圆点用虚实两种点表达全部隧道状态，品牌图案是横过来的 T，错误状态按类型分组显示不同红色图案，繁忙过程有对应点阵动画。
+LiteOC v1.12 对标 Tailscale 重设计了菜单栏菜单:首行去掉与图标重复的状态灯,改为"有事才着色";新增连接信息行一键复制 IP;修复与诊断入口常驻菜单;未配置时菜单栏图标变为红色 C 形,引导完成初始设置。
 
 ### 用户可感知变化
 
-- 状态栏图标改为 3×3 点阵：已连接显示横 T 图案，未连接为全灭点阵，连接中为外圈顺时针追逐动画，断开中为 T 逐点坍缩动画。
-- 自动重连时整个 T 图案闪烁，路由修复中为逐行扫描动画，一眼区分于其他状态。
-- 错误状态显示红色分组图案：超时为沙漏、认证/证书为锁、连接掉线为断裂双竖、网络变化/重连失败为空心环、路由/断开清理失败为 X。
-- Dock 图标换新：深色底板上的白色 C 形点阵（liteOC 的 C)，与状态栏点阵同一视觉语言。
+- 菜单首行不再带状态圆点:未连接/已连接是普通菜单行,连接中与出错时才出现橙/红色块;尚未完成初始设置时首行以红色描边引导。
+- 已连接时菜单出现连接信息行:显示隧道 IP 与当前网关,点击即复制 IP,下次打开菜单时该行短暂显示"已复制到剪贴板"(不弹系统通知)。
+- 菜单新增常驻的"立即修复"与"复制诊断信息":前者仅在隧道不活跃时可用(避免打断活连接),后者一键收集 Tunnel 状态、Network Fingerprint 基线与现状、最近错误,绝不含 PIN。
+- 未配置时菜单栏点阵图标从全灭变为红色 C 形,与"已配置未连接"一眼区分。
+- 菜单首行与信息行的文字缩进对齐系统菜单项;退出项不再出现新版 macOS 自动附加的图标。
 
 ### 验证
 
-- 17 个契约测试脚本全部通过；其中新增菜单栏图标纯函数测试 59 条断言，逐状态锁定帧序列、帧间隔与着色，架构测试确认旧 PNG/spinner 路径无残留。
-- 菜单栏点阵与 Dock 图标均经放大渲染目验：图案正确、灭点 22% 透明度可见、点阵在画布居中。
-- App 自本版构建打包通过（build.sh 全链路：图标生成、编译、签名）。
+- 全部 17 个契约测试脚本通过;菜单呈现与点阵图标两条纯函数契约测试覆盖 15 态文案、色调、信息行出现条件与图标帧序列(37 + 58 条断言)。
+- 三轮本机验收:四段菜单结构、复制 IP 与"已复制"反馈、诊断信息版本号(version.sh 未显式指定时回退读取最新 Git tag)、已连接时"立即修复"置灰、文字缩进对齐均逐项目验通过。
+- App 自本版构建打包通过(build.sh 全链路:图标生成、编译、签名)。
 
 ## English
 
-LiteOC v1.11 replaces both the status item and the Dock icon with a nine-grid dot-matrix language: a 3×3 grid of dots expresses every tunnel state through lit and dim dots, the brand mark is a sideways T, error states show distinct red glyphs grouped by failure type, and busy transitions get matching dot animations.
+LiteOC v1.12 redesigns the menu bar menu, benchmarked against Tailscale: the primary row drops its redundant status dot in favor of "color only when attention is needed"; a new connection info row copies your tunnel IP in one click; repair and diagnostics entries are always visible; and the menu bar icon turns into a red C shape when the profile is not yet configured.
 
 ### User-visible changes
 
-- The status item is now a 3×3 dot matrix: a sideways T when connected, an all-dim grid when disconnected, a clockwise chase animation around the ring while connecting, and a dot-by-dot T collapse while disconnecting.
-- Auto-reconnect blinks the whole T pattern and route repair scans row by row, each busy state visually distinct.
-- Error states show grouped red glyphs: an hourglass for timeout, a lock for auth/certificate, broken columns for a dropped connection, a hollow ring for network-changed/reconnect-failed, and an X for route/teardown cleanup failures.
-- New Dock icon: a white C-shaped dot matrix (the C of liteOC) on a dark squircle, sharing the same visual language as the status item.
+- The primary row no longer carries a status dot: disconnected/connected are plain menu rows, while connecting and error states show soft orange/red blocks; before initial setup the row is outlined in red as a guide.
+- When connected, a connection info row shows the tunnel IP and current gateway; clicking it copies the IP, and the row briefly reads "Copied to clipboard" the next time the menu opens (no system notification).
+- New always-visible menu items: "Repair Now" (enabled only while the tunnel is inactive, so it can't disrupt a live connection) and "Copy Diagnostics" (tunnel state, network fingerprint baseline/current, last error — never the PIN).
+- The menu bar dot-matrix icon changes from an all-dim grid to a red C shape when unconfigured, clearly distinct from "configured but disconnected".
+- Text insets of the primary and info rows now align with standard menu items; the Quit item no longer shows the icon recent macOS versions attach automatically.
 
 ### Verification
 
-- All 17 contract test scripts pass, including a new menu-bar icon pure-function suite with 59 assertions locking every state's frame sequence, frame interval, and tint; architecture tests confirm no leftover PNG/spinner paths.
-- Both the status-item matrix and the Dock icon were visually verified from enlarged renders: correct glyphs, dim dots visible at 22% opacity, grid centered on the canvas.
+- All 17 contract test scripts pass; the two pure-function contract suites (menu presentation, menu bar icon) cover copy, tone, info-row visibility, and icon frame sequences across 15 states (37 + 58 assertions).
+- Three rounds of on-device acceptance: four-section menu structure, copy-IP feedback, diagnostics version (version.sh falls back to the latest git tag), "Repair Now" disabled while connected, and text alignment were each visually verified.
 - The app builds and packages cleanly from this version (full build.sh pipeline: icon generation, compile, signing).
 
 ## Full Changelog
 
-https://github.com/ren2019/LiteOC/compare/v1.10...v1.11
+https://github.com/ren2019/LiteOC/compare/v1.11...v1.12
