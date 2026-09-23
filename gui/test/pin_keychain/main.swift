@@ -79,9 +79,16 @@ let candidatePin = "created-test-pin"
 var createSession = PinSaveSession()
 let createRequest = createSession.begin()
 let createPendingOutcome = PinSaveWorkflow.perform(value: candidatePin, service: "test", using: store(createFake))
-let createOutcome = createRequest.flatMap { createSession.complete($0, outcome: createPendingOutcome) }
+var createInput = candidatePin
+var createCallbackCount = 0
+let createOutcome = createRequest.flatMap { request in
+    createSession.complete(request, outcome: createPendingOutcome, onVerified: { _ in
+        createInput = ""
+        createCallbackCount += 1
+    })
+}
 check("new PIN succeeds only after write and matching read-back", createOutcome == .saved)
-check("verified settings save clears input and calls the success callback", createOutcome?.clearsInput == true && createOutcome?.callsSuccessCallback == true)
+check("verified settings save clears input and calls the success callback", createInput.isEmpty && createCallbackCount == 1)
 check("successful create performs exactly one write and one read", createFake.calls.count == 2)
 check("successful create stores the requested value", createFake.item == candidatePin)
 
@@ -95,10 +102,17 @@ failedWriteFake.writeResult = .exited(status: 51, output: "created-test-pin in p
 var failedWriteSession = PinSaveSession()
 let failedWriteRequest = failedWriteSession.begin()
 let failedWritePendingOutcome = PinSaveWorkflow.perform(value: candidatePin, service: "test", using: store(failedWriteFake))
-let failedWriteOutcome = failedWriteRequest.flatMap { failedWriteSession.complete($0, outcome: failedWritePendingOutcome) }
+var failedWriteInput = candidatePin
+var failedWriteCallbackCount = 0
+let failedWriteOutcome = failedWriteRequest.flatMap { request in
+    failedWriteSession.complete(request, outcome: failedWritePendingOutcome, onVerified: { _ in
+        failedWriteInput = ""
+        failedWriteCallbackCount += 1
+    })
+}
 if case let .failed(message: message) = failedWriteOutcome {
     check("old readable item cannot hide a failed write", message.contains("写入失败") && message.contains("51") && failedWriteFake.calls.count == 1)
-    check("write failure retains input and does not call success callback", failedWriteOutcome?.clearsInput == false && failedWriteOutcome?.callsSuccessCallback == false)
+    check("write failure retains input and does not call success callback", failedWriteInput == candidatePin && failedWriteCallbackCount == 0)
     check("write failure summary contains no PIN or raw output", !message.contains(candidatePin) && !message.contains("private error output"))
 } else {
     check("old readable item cannot hide a failed write", false)
@@ -137,14 +151,20 @@ var gate = PinSaveSession()
 let firstSave = gate.begin()
 check("save gate accepts the first submission", firstSave != nil)
 check("save gate blocks a duplicate submission", gate.begin() == nil)
+var firstOutcome = PinSaveOutcome.saved
 if let firstSave {
-    check("save completion releases the gate", gate.complete(firstSave, outcome: .saved) == .saved)
+    firstOutcome = gate.complete(firstSave, outcome: .saved, onVerified: { _ in }) ?? .failed(message: "stale")
 }
+check("save completion releases the gate", firstOutcome == .saved)
 let staleSave = gate.begin()
-gate.invalidate()
+var discardedInput = candidatePin
+gate.invalidate { discardedInput = "" }
 let nextSave = gate.begin()
-check("closing invalidates the active save result", staleSave.map { gate.complete($0, outcome: .saved) == nil } == true)
-check("a stale completion cannot release a newer save", nextSave.map { gate.complete($0, outcome: .saved) == .saved } == true)
+var staleCallbackCount = 0
+let staleOutcome = staleSave.flatMap { gate.complete($0, outcome: .saved, onVerified: { _ in staleCallbackCount += 1 }) }
+check("cancel or close clears the pending input", discardedInput.isEmpty)
+check("closing invalidates the active save result", staleSave != nil && staleOutcome == nil)
+check("a stale completion cannot release a newer save", nextSave.map { gate.complete($0, outcome: .saved, onVerified: { _ in }) == .saved } == true && staleCallbackCount == 0)
 
 print("\n\(assertions - failures) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

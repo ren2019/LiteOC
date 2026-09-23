@@ -530,9 +530,8 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
     @objc func cancelEditPin() {
         let restoreCheckingState: Bool
         if case .checking = stateBeforeEditing { restoreCheckingState = true } else { restoreCheckingState = false }
-        pinSaveSession.invalidate()
+        pinSaveSession.invalidate { self.pinField.stringValue = "" }
         pinReadGeneration += 1
-        pinField.stringValue = ""
         pinState = stateBeforeEditing
         if restoreCheckingState { refreshPinStatus() } else { rebuildPinRow() }
     }
@@ -552,14 +551,19 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = PinSaveWorkflow.perform(value: value, service: requestedService, using: store)
             DispatchQueue.main.async {
-                guard let self, let outcome = self.pinSaveSession.complete(request, outcome: outcome) else { return }
-                switch outcome {
-                case .saved:
+                guard let self else { return }
+                var session = self.pinSaveSession
+                guard let outcome = session.complete(request, outcome: outcome, onVerified: { message in
                     self.pinField.stringValue = ""
                     self.pinState = .managed
-                    self.showPinFeedback(outcome.message, success: true)
+                    self.showPinFeedback(message, success: true)
                     self.rebuildPinRow()
                     self.onSaved?()
+                }) else { return }
+                self.pinSaveSession = session
+                switch outcome {
+                case .saved:
+                    break
                 case let .failed(message: message):
                     self.pinState = .editing
                     self.showPinFeedback(message)
@@ -612,9 +616,8 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
     }
 
     private func discardPinInput() {
-        pinSaveSession.invalidate()
+        pinSaveSession.invalidate { self.pinField.stringValue = "" }
         pinReadGeneration += 1
-        pinField.stringValue = ""
         pinState = .checking
     }
 

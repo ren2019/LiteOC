@@ -212,20 +212,34 @@ enum PinSaveOutcome: Equatable {
     case saved
     case failed(message: String)
 
-    var clearsInput: Bool {
-        if case .saved = self { return true }
-        return false
-    }
-
-    var callsSuccessCallback: Bool {
-        clearsInput
-    }
-
     var message: String {
         switch self {
         case .saved: return "PIN 已保存并验证。"
         case let .failed(message: message): return message
         }
+    }
+}
+
+struct PinSaveSession {
+    private var gate = PinSaveGate()
+
+    mutating func begin() -> Int? { gate.begin() }
+
+    mutating func complete(
+        _ request: Int,
+        outcome: PinSaveOutcome,
+        onVerified: (String) -> Void
+    ) -> PinSaveOutcome? {
+        guard gate.complete(request) else { return nil }
+        if case .saved = outcome {
+            onVerified(outcome.message)
+        }
+        return outcome
+    }
+
+    mutating func invalidate(clearInput: () -> Void) {
+        gate.invalidate()
+        clearInput()
     }
 }
 
@@ -238,17 +252,4 @@ enum PinSaveWorkflow {
             return .failed(message: error.description)
         }
     }
-}
-
-struct PinSaveSession {
-    private var gate = PinSaveGate()
-
-    mutating func begin() -> Int? { gate.begin() }
-
-    mutating func complete(_ request: Int, outcome: PinSaveOutcome) -> PinSaveOutcome? {
-        guard gate.complete(request) else { return nil }
-        return outcome
-    }
-
-    mutating func invalidate() { gate.invalidate() }
 }
