@@ -76,7 +76,12 @@ if case let .failed(error) = store(unavailableFake).read(service: "test") {
 
 let createFake = FakeSecurity()
 let candidatePin = "created-test-pin"
-check("new PIN succeeds only after write and matching read-back", store(createFake).saveAndVerify(value: candidatePin, service: "test") == .verified)
+var createSession = PinSaveSession()
+let createRequest = createSession.begin()
+let createResult = store(createFake).saveAndVerify(value: candidatePin, service: "test")
+let createOutcome = createRequest.flatMap { createSession.complete($0, result: createResult) }
+check("new PIN succeeds only after write and matching read-back", createOutcome == .saved)
+check("verified settings save clears input and calls the success callback", createOutcome?.clearsInput == true && createOutcome?.callsSuccessCallback == true)
 check("successful create performs exactly one write and one read", createFake.calls.count == 2)
 check("successful create stores the requested value", createFake.item == candidatePin)
 
@@ -87,12 +92,31 @@ check("PIN update succeeds after the new value reads back", store(updateFake).sa
 let failedWriteFake = FakeSecurity()
 failedWriteFake.item = "old-test-pin"
 failedWriteFake.writeResult = .exited(status: 51, output: "created-test-pin in private error output")
-if case let .writeFailed(error) = store(failedWriteFake).saveAndVerify(value: candidatePin, service: "test") {
-    check("old readable item cannot hide a failed write", error.operation == .write && error.exitCode == 51 && failedWriteFake.calls.count == 1)
-    check("write failure summary contains no PIN or raw output", !error.description.contains(candidatePin) && !error.description.contains("private error output"))
+var failedWriteSession = PinSaveSession()
+let failedWriteRequest = failedWriteSession.begin()
+let failedWriteResult = store(failedWriteFake).saveAndVerify(value: candidatePin, service: "test")
+let failedWriteOutcome = failedWriteRequest.flatMap { failedWriteSession.complete($0, result: failedWriteResult) }
+if case let .failed(message) = failedWriteOutcome {
+    if case let .writeFailed(error) = failedWriteResult {
+        check("old readable item cannot hide a failed write", error.operation == .write && error.exitCode == 51 && failedWriteFake.calls.count == 1)
+    } else {
+        check("old readable item cannot hide a failed write", false)
+    }
+    check("write failure retains input and does not call success callback", failedWriteOutcome?.clearsInput == false && failedWriteOutcome?.callsSuccessCallback == false)
+    check("write failure summary contains no PIN or raw output", !message.contains(candidatePin) && !message.contains("private error output"))
 } else {
     check("old readable item cannot hide a failed write", false)
+    check("write failure retains input and does not call success callback", false)
     check("write failure summary contains no PIN or raw output", false)
+}
+
+let launchFailureWriteFake = FakeSecurity()
+launchFailureWriteFake.item = "old-test-pin"
+launchFailureWriteFake.writeResult = .launchFailed
+if case let .writeFailed(error) = store(launchFailureWriteFake).saveAndVerify(value: candidatePin, service: "test") {
+    check("write process launch failure is distinct from an unsuccessful write status", error.operation == .write && error.exitCode == nil && error.category == .commandUnavailable)
+} else {
+    check("write process launch failure is distinct from an unsuccessful write status", false)
 }
 
 let verifyReadFailureFake = FakeSecurity()
@@ -113,16 +137,18 @@ if case let .verificationFailed(error) = store(mismatchFake).saveAndVerify(value
     check("mismatched read-back is not reported as saved", false)
 }
 
-var gate = PinSaveGate()
+var gate = PinSaveSession()
 let firstSave = gate.begin()
 check("save gate accepts the first submission", firstSave != nil)
 check("save gate blocks a duplicate submission", gate.begin() == nil)
 if let firstSave {
-    check("save completion releases the gate", gate.complete(firstSave))
+    check("save completion releases the gate", gate.complete(firstSave, result: .verified) == .saved)
 }
 let staleSave = gate.begin()
 gate.invalidate()
-check("closing invalidates the active save result", staleSave.map { !gate.complete($0) } == true)
+let nextSave = gate.begin()
+check("closing invalidates the active save result", staleSave.map { gate.complete($0, result: .verified) == nil } == true)
+check("a stale completion cannot release a newer save", nextSave.map { gate.complete($0, result: .verified) == .saved } == true)
 
 print("\n\(assertions - failures) passed, \(failures) failed")
 exit(failures == 0 ? 0 : 1)

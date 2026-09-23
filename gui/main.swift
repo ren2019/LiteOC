@@ -280,7 +280,7 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
     var service = "LiteOC"
     var onSaved: (() -> Void)?
     let pinStore: PinKeychainStore
-    private var pinSaveGate = PinSaveGate()
+    private var pinSaveSession = PinSaveSession()
     private var pinReadGeneration = 0
     private var stateBeforeEditing: PinState = .checking
     private var pinFeedback: (message: String, success: Bool)?
@@ -432,27 +432,27 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
                 guard self.pinReadGeneration == request else { return }
                 switch result {
                 case .value:
-                    if case .checking = self.pinState {
-                        self.pinState = .managed
-                    } else if case .editing = self.pinState {
-                        self.stateBeforeEditing = .managed
-                    }
+                    self.applyPinReadState(.managed)
                 case .missing:
-                    if case .checking = self.pinState {
-                        self.pinState = .empty
-                    } else if case .editing = self.pinState {
-                        self.stateBeforeEditing = .empty
-                    }
+                    self.applyPinReadState(.empty)
                 case let .failed(error):
-                    if case .checking = self.pinState {
-                        self.pinState = .readFailed(error)
-                    } else if case .editing = self.pinState {
-                        self.stateBeforeEditing = .readFailed(error)
+                    let isEditing: Bool
+                    if case .editing = self.pinState { isEditing = true } else { isEditing = false }
+                    self.applyPinReadState(.readFailed(error))
+                    if isEditing {
                         self.showPinFeedback(error.description)
                     }
                 }
                 self.rebuildPinRow()
             }
+        }
+    }
+
+    private func applyPinReadState(_ resolvedState: PinState) {
+        if case .checking = pinState {
+            pinState = resolvedState
+        } else if case .editing = pinState {
+            stateBeforeEditing = resolvedState
         }
     }
 
@@ -530,7 +530,7 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
     @objc func cancelEditPin() {
         let restoreCheckingState: Bool
         if case .checking = stateBeforeEditing { restoreCheckingState = true } else { restoreCheckingState = false }
-        pinSaveGate.invalidate()
+        pinSaveSession.invalidate()
         pinReadGeneration += 1
         pinField.stringValue = ""
         pinState = stateBeforeEditing
@@ -541,7 +541,7 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
         if case .saving = pinState { return }
         let value = pinField.stringValue
         guard !value.isEmpty else { showValidation("请输入 PIN 后再存入钥匙串。"); win.makeFirstResponder(pinField); return }
-        guard let request = pinSaveGate.begin() else { return }
+        guard let request = pinSaveSession.begin() else { return }
         pinFeedback = nil
         validation.isHidden = true
         pinReadGeneration += 1
@@ -552,17 +552,17 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = store.saveAndVerify(value: value, service: requestedService)
             DispatchQueue.main.async {
-                guard let self, self.pinSaveGate.complete(request) else { return }
-                switch result {
-                case .verified:
+                guard let self, let outcome = self.pinSaveSession.complete(request, result: result) else { return }
+                switch outcome {
+                case .saved:
                     self.pinField.stringValue = ""
                     self.pinState = .managed
-                    self.showPinFeedback("PIN 已保存并验证。", success: true)
+                    self.showPinFeedback(outcome.message, success: true)
                     self.rebuildPinRow()
                     self.onSaved?()
-                case let .writeFailed(error), let .verificationFailed(error):
+                case let .failed(message):
                     self.pinState = .editing
-                    self.showPinFeedback(error.description)
+                    self.showPinFeedback(message)
                     self.rebuildPinRow(focus: true)
                 }
             }
@@ -612,7 +612,7 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
     }
 
     private func discardPinInput() {
-        pinSaveGate.invalidate()
+        pinSaveSession.invalidate()
         pinReadGeneration += 1
         pinField.stringValue = ""
         pinState = .checking

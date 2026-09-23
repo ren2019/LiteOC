@@ -207,3 +207,42 @@ struct PinSaveGate {
         activeGeneration = nil
     }
 }
+
+enum PinSaveOutcome: Equatable {
+    case saved
+    case failed(String)
+
+    var clearsInput: Bool {
+        if case .saved = self { return true }
+        return false
+    }
+
+    var callsSuccessCallback: Bool {
+        clearsInput
+    }
+
+    var message: String {
+        switch self {
+        case .saved: return "PIN 已保存并验证。"
+        case let .failed(message): return message
+        }
+    }
+}
+
+struct PinSaveSession {
+    private var gate = PinSaveGate()
+
+    mutating func begin() -> Int? { gate.begin() }
+
+    mutating func complete(_ request: Int, result: PinSaveResult) -> PinSaveOutcome? {
+        guard gate.complete(request) else { return nil }
+        switch result {
+        case .verified:
+            return .saved
+        case let .writeFailed(error), let .verificationFailed(error):
+            return .failed(error.description)
+        }
+    }
+
+    mutating func invalidate() { gate.invalidate() }
+}
