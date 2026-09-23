@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MAIN="$ROOT/gui/main.swift"
 BUILD="$ROOT/gui/build.sh"
 ICON_MODEL="$ROOT/gui/MenuBarIcon.swift"
+PIN_KEYCHAIN="$ROOT/gui/PinKeychain.swift"
 
 pass=0
 fail=0
@@ -51,6 +52,11 @@ check_count "missing config fields are only written by the Effect interpreter" \
 check_contains "menu configuration uses the helper config-error payload" \
   "missingConfigFields: helperMissingConfigFields" "$MAIN"
 check_contains "App build links TunnelReducer" "TunnelReducer.swift" "$BUILD"
+check_contains "App build links the Keychain adapter" "PinKeychain.swift" "$BUILD"
+check_contains "settings save delegates to the tested PIN workflow" "PinSaveWorkflow.perform(value: value, service: requestedService, using: store)" "$MAIN"
+check_contains "PIN workflow verifies writes by reading them back" "store.saveAndVerify(value: value, service: service)" "$PIN_KEYCHAIN"
+check_contains "settings Keychain reads run away from the AppKit main thread" "DispatchQueue.global(qos: .userInitiated).async" "$MAIN"
+check_contains "window closure invalidates and clears a pending PIN save" "pinSaveSession.invalidate { self.pinField.stringValue = \"\" }" "$MAIN"
 check_contains "main.swift declares a formal entry point" "@main" "$MAIN"
 check_contains "formal entry point owns main()" "static func main()" "$MAIN"
 check_absent "main.swift has no top-level app.run()" '^app\.run\(\)$' "$MAIN"

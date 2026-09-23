@@ -6,23 +6,6 @@ let VPNCTL    = "/usr/local/sbin/vpnctl"
 let ConfDir   = NSHomeDirectory() + "/Library/Application Support/LiteOC"
 let ConfPath  = ConfDir + "/config"
 
-// ---- 跑命令 ----
-@discardableResult
-func run(_ exe: String, _ args: [String], stdin: String? = nil) -> String {
-    let p = Process(); p.launchPath = exe; p.arguments = args
-    let out = Pipe(); p.standardOutput = out; p.standardError = Pipe()
-    if let s = stdin {
-        let inp = Pipe(); p.standardInput = inp
-        do { try p.run() } catch { return "" }
-        inp.fileHandleForWriting.write(s.data(using: .utf8)!); inp.fileHandleForWriting.closeFile()
-    } else {
-        p.standardInput = Pipe()
-        do { try p.run() } catch { return "" }
-    }
-    p.waitUntilExit()
-    return String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-}
-
 // ---- 配置: 读 / 写 ----
 func loadConfig() -> [String: String] {
     AppConfig.load(fromPath: ConfPath)
@@ -39,13 +22,11 @@ func ensureConfig() {
 }
 
 // ---- 钥匙串 ----
+let pinKeychainStore = PinKeychainStore(account: AppConfig.keychainAccount)
+
 func rawPin(_ service: String) -> String? {
-    let s = run("/usr/bin/security", ["find-generic-password", "-s", service, "-a", AppConfig.keychainAccount, "-w"])
-    let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-    return t.isEmpty ? nil : t
-}
-func pinSet(_ service: String, _ v: String) {
-    run("/usr/bin/security", ["add-generic-password", "-s", service, "-a", AppConfig.keychainAccount, "-w", v, "-T", "/usr/bin/security", "-U"])
+    if case let .value(value) = pinKeychainStore.read(service: service) { return value }
+    return nil
 }
 
 // ---- 诊断信息: Network Fingerprint 描述 ----
@@ -281,9 +262,12 @@ final class ConnectionInfoMenuItemView: NSView {
 }
 
 // ---- 配置窗口 ----
-enum PinState { case managed, empty, editing }
+enum PinState {
+    case checking, managed, empty, editing, saving
+    case readFailed(PinKeychainFailure)
+}
 
-final class ConfigWindow: NSObject {
+final class ConfigWindow: NSObject, NSWindowDelegate {
     let win: NSWindow
     let host = NSTextField(), user = NSTextField(), group = NSTextField()
     let certSec = NSSecureTextField(), certPlain = NSTextField()
@@ -291,17 +275,23 @@ final class ConfigWindow: NSObject {
     let validation = NSTextField(labelWithString: "")
     let pinBox = NSBox()
     var certRevealed = false
-    var pinState = PinState.empty
+    var pinState = PinState.checking
     var pinField = NSSecureTextField()
     var service = "LiteOC"
     var onSaved: (() -> Void)?
+    let pinStore: PinKeychainStore
+    private var pinSaveSession = PinSaveSession()
+    private var pinReadGeneration = 0
+    private var stateBeforeEditing: PinState = .checking
+    private var pinFeedback: (message: String, success: Bool)?
 
-    init(service: String, onSaved: @escaping () -> Void) {
-        self.service = service; self.onSaved = onSaved
+    init(service: String, onSaved: @escaping () -> Void, pinStore: PinKeychainStore = PinKeychainStore(account: AppConfig.keychainAccount)) {
+        self.service = service; self.onSaved = onSaved; self.pinStore = pinStore
         win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 430),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
         win.title = "LiteOC 设置"; win.isReleasedWhenClosed = false
+        win.delegate = self
         win.contentMinSize = NSSize(width: 560, height: 430)
 
         let cv = win.contentView!
@@ -414,7 +404,7 @@ final class ConfigWindow: NSObject {
             save.widthAnchor.constraint(equalToConstant: 90), cancel.widthAnchor.constraint(equalToConstant: 72)
         ])
 
-        load(); rebuildPinRow()
+        load()
     }
 
     var certValue: String { certRevealed ? certPlain.stringValue : certSec.stringValue }
@@ -425,8 +415,45 @@ final class ConfigWindow: NSObject {
         let cert = c["SERVERCERT"] ?? ""
         certSec.stringValue = cert; certPlain.stringValue = cert
         certRevealed = false; certSec.isHidden = false; certPlain.isHidden = true; certToggle.title = "显示"
-        validation.isHidden = true
-        pinState = rawPin(service) == nil ? .empty : .managed
+        renderPinFeedback()
+        refreshPinStatus()
+    }
+
+    private func refreshPinStatus() {
+        pinReadGeneration += 1
+        let request = pinReadGeneration
+        let requestedService = service
+        pinState = .checking
+        rebuildPinRow()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let result = self.pinStore.read(service: requestedService)
+            DispatchQueue.main.async {
+                guard self.pinReadGeneration == request else { return }
+                switch result {
+                case .value:
+                    self.applyPinReadState(.managed)
+                case .missing:
+                    self.applyPinReadState(.empty)
+                case let .failed(error):
+                    let isEditing: Bool
+                    if case .editing = self.pinState { isEditing = true } else { isEditing = false }
+                    self.applyPinReadState(.readFailed(error))
+                    if isEditing {
+                        self.showPinFeedback(error.description)
+                    }
+                }
+                self.rebuildPinRow()
+            }
+        }
+    }
+
+    private func applyPinReadState(_ resolvedState: PinState) {
+        if case .checking = pinState {
+            pinState = resolvedState
+        } else if case .editing = pinState {
+            stateBeforeEditing = resolvedState
+        }
     }
 
     @objc func toggleCert() {
@@ -440,21 +467,37 @@ final class ConfigWindow: NSObject {
     func rebuildPinRow(focus: Bool = false) {
         let content = pinBox.contentView ?? pinBox
         content.subviews.forEach { $0.removeFromSuperview() }
-        let managed = rawPin(service) != nil
-        pinBox.fillColor = (managed && pinState != .editing)
+        pinBox.fillColor = pinState.isManaged
             ? NSColor.systemGreen.withAlphaComponent(0.12) : .controlBackgroundColor
 
         let row: NSStackView
-        if managed && pinState != .editing {
+        switch pinState {
+        case .managed:
             let ok = NSTextField(labelWithString: "✓  PIN 已安全存储在钥匙串")
             ok.font = .systemFont(ofSize: 12, weight: .semibold); ok.textColor = .systemGreen
             let edit = NSButton(title: "修改…", target: self, action: #selector(editPin)); edit.bezelStyle = .rounded
             row = NSStackView(views: [ok, edit])
-        } else {
-            pinField = NSSecureTextField(); pinField.placeholderString = "输入 PIN"; pinField.font = .systemFont(ofSize: 13)
-            let save = NSButton(title: "存入钥匙串", target: self, action: #selector(savePin)); save.bezelStyle = .rounded
+        case .checking:
+            let label = NSTextField(labelWithString: "正在检查钥匙串…")
+            label.font = .systemFont(ofSize: 12); label.textColor = .secondaryLabelColor
+            row = NSStackView(views: [label])
+        case let .readFailed(error):
+            let label = NSTextField(labelWithString: error.description)
+            label.font = .systemFont(ofSize: 11); label.textColor = .systemRed
+            label.lineBreakMode = .byTruncatingTail
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let retry = NSButton(title: "重试", target: self, action: #selector(retryPinRead)); retry.bezelStyle = .rounded
+            let edit = NSButton(title: "录入…", target: self, action: #selector(editPin)); edit.bezelStyle = .rounded
+            row = NSStackView(views: [label, retry, edit])
+        case .empty, .editing, .saving:
+            pinField.placeholderString = "输入 PIN"; pinField.font = .systemFont(ofSize: 13)
+            let saving: Bool
+            if case .saving = pinState { saving = true } else { saving = false }
+            pinField.isEnabled = !saving
+            let save = NSButton(title: saving ? "保存中…" : "存入钥匙串", target: self, action: #selector(savePin))
+            save.bezelStyle = .rounded; save.isEnabled = !saving
             var views: [NSView] = [pinField, save]
-            if managed {
+            if case .editing = pinState {
                 let cancel = NSButton(title: "取消", target: self, action: #selector(cancelEditPin)); cancel.bezelStyle = .rounded
                 views.append(cancel)
             }
@@ -472,20 +515,79 @@ final class ConfigWindow: NSObject {
     }
 
     func focusPin() {
-        pinState = .editing; rebuildPinRow(focus: true)
+        beginPinEditing()
         showValidation("连接前请先存入 PIN。")
     }
 
-    @objc func editPin() { pinState = .editing; rebuildPinRow(focus: true) }
-    @objc func cancelEditPin() { pinState = rawPin(service) == nil ? .empty : .managed; rebuildPinRow() }
-    @objc func savePin() {
-        let value = pinField.stringValue
-        guard !value.isEmpty else { showValidation("请输入 PIN 后再存入钥匙串。"); win.makeFirstResponder(pinField); return }
-        pinSet(service, value); pinField.stringValue = ""; pinState = .managed; validation.isHidden = true; rebuildPinRow()
-        onSaved?()
+    private func beginPinEditing() {
+        stateBeforeEditing = pinState
+        pinState = .editing
+        rebuildPinRow(focus: true)
     }
 
-    private func showValidation(_ message: String) { validation.stringValue = message; validation.isHidden = false }
+    @objc func editPin() { beginPinEditing() }
+    @objc func retryPinRead() { refreshPinStatus() }
+    @objc func cancelEditPin() {
+        let restoreCheckingState: Bool
+        if case .checking = stateBeforeEditing { restoreCheckingState = true } else { restoreCheckingState = false }
+        pinSaveSession.invalidate { self.pinField.stringValue = "" }
+        pinReadGeneration += 1
+        pinState = stateBeforeEditing
+        if restoreCheckingState { refreshPinStatus() } else { rebuildPinRow() }
+    }
+
+    @objc func savePin() {
+        if case .saving = pinState { return }
+        let value = pinField.stringValue
+        guard !value.isEmpty else { showValidation("请输入 PIN 后再存入钥匙串。"); win.makeFirstResponder(pinField); return }
+        guard let request = pinSaveSession.begin() else { return }
+        pinFeedback = nil
+        validation.isHidden = true
+        pinReadGeneration += 1
+        let requestedService = service
+        let store = pinStore
+        pinState = .saving
+        rebuildPinRow()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let outcome = PinSaveWorkflow.perform(value: value, service: requestedService, using: store)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                var session = self.pinSaveSession
+                guard let outcome = session.complete(request, outcome: outcome, onVerified: { message in
+                    self.pinField.stringValue = ""
+                    self.pinState = .managed
+                    self.showPinFeedback(message, success: true)
+                    self.rebuildPinRow()
+                    self.onSaved?()
+                }) else { return }
+                self.pinSaveSession = session
+                switch outcome {
+                case .saved:
+                    break
+                case let .failed(message: message):
+                    self.pinState = .editing
+                    self.showPinFeedback(message)
+                    self.rebuildPinRow(focus: true)
+                }
+            }
+        }
+    }
+
+    private func showValidation(_ message: String) {
+        validation.stringValue = message; validation.textColor = .systemRed; validation.isHidden = false
+    }
+
+    private func showPinFeedback(_ message: String, success: Bool = false) {
+        pinFeedback = (message, success)
+        renderPinFeedback()
+    }
+
+    private func renderPinFeedback() {
+        guard let pinFeedback else { validation.isHidden = true; return }
+        validation.stringValue = pinFeedback.message
+        validation.textColor = pinFeedback.success ? .systemGreen : .systemRed
+        validation.isHidden = false
+    }
 
     @objc func doSave() {
         let fields: [(NSTextField, String)] = [(host, "vpn.example.com:443"), (user, "your-username"), (group, "your-group")]
@@ -505,14 +607,31 @@ final class ConfigWindow: NSObject {
     }
 
     @objc func doClose() {
-        pinField.stringValue = ""
-        pinState = rawPin(service) == nil ? .empty : .managed
+        discardPinInput()
         win.close()
     }
+
+    func windowWillClose(_ notification: Notification) {
+        discardPinInput()
+    }
+
+    private func discardPinInput() {
+        pinSaveSession.invalidate { self.pinField.stringValue = "" }
+        pinReadGeneration += 1
+        pinState = .checking
+    }
+
     func show(focusPin: Bool = false) {
-        load(); rebuildPinRow(); win.center(); win.makeKeyAndOrderFront(nil)
+        load(); win.center(); win.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         if focusPin { self.focusPin() }
+    }
+}
+
+private extension PinState {
+    var isManaged: Bool {
+        if case .managed = self { return true }
+        return false
     }
 }
 

@@ -38,7 +38,7 @@ fi
 
 echo "→ 编译 Swift…"
 mkdir -p "$BINDIR"
-run_swiftc -parse-as-library main.swift AppConfig.swift MenuPresentation.swift MenuBarIcon.swift VpnctlClient.swift TunnelReducer.swift TunnelPolling.swift -o "$BINDIR/$APPNAME" -framework Cocoa -framework ServiceManagement
+run_swiftc -parse-as-library main.swift AppConfig.swift PinKeychain.swift MenuPresentation.swift MenuBarIcon.swift VpnctlClient.swift TunnelReducer.swift TunnelPolling.swift -o "$BINDIR/$APPNAME" -framework Cocoa -framework ServiceManagement
 
 echo "→ 打包 .app …"
 rm -rf "$APP"
