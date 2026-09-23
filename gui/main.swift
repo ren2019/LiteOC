@@ -550,9 +550,9 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
         pinState = .saving
         rebuildPinRow()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = store.saveAndVerify(value: value, service: requestedService)
+            let outcome = PinSaveWorkflow.perform(value: value, service: requestedService, using: store)
             DispatchQueue.main.async {
-                guard let self, let outcome = self.pinSaveSession.complete(request, result: result) else { return }
+                guard let self, let outcome = self.pinSaveSession.complete(request, outcome: outcome) else { return }
                 switch outcome {
                 case .saved:
                     self.pinField.stringValue = ""
@@ -560,7 +560,7 @@ final class ConfigWindow: NSObject, NSWindowDelegate {
                     self.showPinFeedback(outcome.message, success: true)
                     self.rebuildPinRow()
                     self.onSaved?()
-                case let .failed(message):
+                case let .failed(message: message):
                     self.pinState = .editing
                     self.showPinFeedback(message)
                     self.rebuildPinRow(focus: true)

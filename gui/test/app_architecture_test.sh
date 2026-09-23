@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 MAIN="$ROOT/gui/main.swift"
 BUILD="$ROOT/gui/build.sh"
 ICON_MODEL="$ROOT/gui/MenuBarIcon.swift"
+PIN_KEYCHAIN="$ROOT/gui/PinKeychain.swift"
 
 pass=0
 fail=0
@@ -52,7 +53,8 @@ check_contains "menu configuration uses the helper config-error payload" \
   "missingConfigFields: helperMissingConfigFields" "$MAIN"
 check_contains "App build links TunnelReducer" "TunnelReducer.swift" "$BUILD"
 check_contains "App build links the Keychain adapter" "PinKeychain.swift" "$BUILD"
-check_contains "settings save uses write-and-read-back verification" "saveAndVerify(value: value, service: requestedService)" "$MAIN"
+check_contains "settings save delegates to the tested PIN workflow" "PinSaveWorkflow.perform(value: value, service: requestedService, using: store)" "$MAIN"
+check_contains "PIN workflow verifies writes by reading them back" "store.saveAndVerify(value: value, service: service)" "$PIN_KEYCHAIN"
 check_contains "settings Keychain reads run away from the AppKit main thread" "DispatchQueue.global(qos: .userInitiated).async" "$MAIN"
 check_contains "window closure invalidates a pending PIN save" "pinSaveSession.invalidate()" "$MAIN"
 check_contains "main.swift declares a formal entry point" "@main" "$MAIN"

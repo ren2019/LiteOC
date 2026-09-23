@@ -210,7 +210,7 @@ struct PinSaveGate {
 
 enum PinSaveOutcome: Equatable {
     case saved
-    case failed(String)
+    case failed(message: String)
 
     var clearsInput: Bool {
         if case .saved = self { return true }
@@ -224,7 +224,18 @@ enum PinSaveOutcome: Equatable {
     var message: String {
         switch self {
         case .saved: return "PIN 已保存并验证。"
-        case let .failed(message): return message
+        case let .failed(message: message): return message
+        }
+    }
+}
+
+enum PinSaveWorkflow {
+    static func perform(value: String, service: String, using store: PinKeychainStore) -> PinSaveOutcome {
+        switch store.saveAndVerify(value: value, service: service) {
+        case .verified:
+            return .saved
+        case let .writeFailed(error), let .verificationFailed(error):
+            return .failed(message: error.description)
         }
     }
 }
@@ -234,14 +245,9 @@ struct PinSaveSession {
 
     mutating func begin() -> Int? { gate.begin() }
 
-    mutating func complete(_ request: Int, result: PinSaveResult) -> PinSaveOutcome? {
+    mutating func complete(_ request: Int, outcome: PinSaveOutcome) -> PinSaveOutcome? {
         guard gate.complete(request) else { return nil }
-        switch result {
-        case .verified:
-            return .saved
-        case let .writeFailed(error), let .verificationFailed(error):
-            return .failed(error.description)
-        }
+        return outcome
     }
 
     mutating func invalidate() { gate.invalidate() }
